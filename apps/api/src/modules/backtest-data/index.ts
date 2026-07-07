@@ -1,10 +1,10 @@
 import { Elysia, t } from 'elysia'
-import { asc } from 'drizzle-orm'
+import { asc, between } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/bun-sqlite'
 import { Database } from 'bun:sqlite'
 import { fileURLToPath } from 'node:url'
 import { join, dirname } from 'node:path'
-import { mkdir, unlink, access } from 'node:fs/promises'
+import { mkdir, unlink, readdir } from 'node:fs/promises'
 import { candles } from '../../db/schema'
 import { UpstoxClient } from '../../config/upstox'
 import {
@@ -92,27 +92,80 @@ async function insertBatched(fileDb: ReturnType<typeof createCandlesFile>['fileD
   }
 }
 
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
+
+/**
+ * Find the per-fetch file that COVERS the requested [reqFromDate, reqToDate] for the
+ * given instrument + timeframe. Filenames are `<instrument>-<timeframe>-<fromDate>-<toDate>.sqlite`
+ * with YYYY-MM-DD dates, so coverage is a plain string comparison. If several files cover
+ * the request, return the one with the SMALLEST range (tightest fit — cheapest read).
+ * Returns null if the data dir is missing or no file covers the request.
+ */
+async function findCoveringFile(
+  instrumentKey: string,
+  timeframe: string,
+  reqFromDate: string,
+  reqToDate: string,
+): Promise<string | null> {
+  const prefix = `${sanitizeFileName(instrumentKey)}-${timeframe}-`
+  let entries: string[]
+  try {
+    entries = await readdir(dataDir)
+  } catch {
+    return null // data dir doesn't exist yet — nothing synced
+  }
+  const covering: { file: string; rangeMs: number }[] = []
+  for (const name of entries) {
+    if (!name.startsWith(prefix) || !name.endsWith('.sqlite')) continue
+    const base = name.slice(0, -'.sqlite'.length) // <prefix><fromDate>-<toDate>
+    const toDateStr = base.slice(-10)
+    const fromDateStr = base.slice(-21, -11) // 10 chars + leading '-'
+    if (!DATE_RE.test(fromDateStr) || !DATE_RE.test(toDateStr)) continue
+    // Coverage: file's [fromDate, toDate] must contain the requested [fromDate, toDate].
+    // String compare is valid for YYYY-MM-DD.
+    if (fromDateStr > reqFromDate || toDateStr < reqToDate) continue
+    const rangeMs =
+      new Date(toDateStr + 'T00:00:00.000Z').getTime() -
+      new Date(fromDateStr + 'T00:00:00.000Z').getTime()
+    covering.push({ file: join(dataDir, name), rangeMs })
+  }
+  if (!covering.length) return null
+  covering.sort((a, b) => a.rangeMs - b.rangeMs)
+  return covering[0].file
+}
+
 export const backtestData = new Elysia({ name: 'backtest-data' })
   // ── GET /backtest/data/candles/:instrumentKey/:timeframe
-  // Open the file matching the exact params and return its candles (backtests consume this).
+  // Find the per-fetch file whose synced range COVERS the requested [fromDate, toDate]
+  // (matched by instrument + timeframe only), then return the candles within that
+  // sub-range ordered by ts. Backtests consume this — sync once, read any sub-range.
   .get(
     '/backtest/data/candles/:instrumentKey/:timeframe',
     async ({ params, query, status }) => {
-      const fileName = candleFileName(
+      if (query.toDate < query.fromDate) {
+        return status(400, { message: 'toDate must be >= fromDate' })
+      }
+      const filePath = await findCoveringFile(
         params.instrumentKey,
         params.timeframe,
         query.fromDate,
         query.toDate,
       )
-      const filePath = join(dataDir, fileName)
-      try {
-        await access(filePath)
-      } catch {
+      if (!filePath) {
         return status(404, {
-          message: 'no stored data for these params — sync first',
-          file: fileName,
+          message:
+            'no stored data covers this instrument + timeframe + range — sync a covering range first',
+          instrumentKey: params.instrumentKey,
+          timeframe: params.timeframe,
+          requestedRange: `${query.fromDate}..${query.toDate}`,
         })
       }
+      // Anchor both bounds to IST: Upstox timestamps a candle at its open time in
+      // IST, so a daily candle for date D has ts = D 00:00 IST = (D-1) 18:30 UTC.
+      // fromMs at UTC midnight would be LATER than that and drop the fromDate daily
+      // candle; toDate end-of-day IST captures every candle timestamped on toDate.
+      const fromMs = new Date(`${query.fromDate}T00:00:00.000+05:30`).getTime()
+      const toMs = new Date(`${query.toDate}T23:59:59.999+05:30`).getTime()
       const sqlite = new Database(filePath)
       try {
         const fileDb = drizzle(sqlite, { schema: { candles } })
@@ -126,6 +179,7 @@ export const backtestData = new Elysia({ name: 'backtest-data' })
             volume: candles.volume,
           })
           .from(candles)
+          .where(between(candles.ts, fromMs, toMs))
           .orderBy(asc(candles.ts))
         return rows
       } finally {
@@ -142,9 +196,9 @@ export const backtestData = new Elysia({ name: 'backtest-data' })
         toDate: t.String({ format: 'date' }),
       }),
       detail: {
-        summary: 'Read stored historical candles (for backtests)',
+        summary: 'Read stored historical candles (sub-range; for backtests)',
         description:
-          'Opens the SQLite file matching the exact instrument + timeframe + fromDate + toDate (created by a prior POST /backtest/data/sync) and returns all its candles ordered by ts. fromDate/toDate must EXACTLY match a prior sync request — they are the file key, not a sub-range filter. Returns 404 if no file matches (sync first). `timeframe` is the canonical label: v2 raw (1minute/30minute/day/week/month) or v3 `{interval}{unit}` (e.g. 1minutes, 1days).',
+          'Finds the per-fetch SQLite file (created by a prior POST /backtest/data/sync) whose synced range COVERS the requested [fromDate, toDate], matched by instrument + timeframe only, and returns the candles within that sub-range ordered by ts. So you can sync a wide range once and read any sub-range. 404 if no synced file covers the requested range (sync a covering range first). `timeframe` MUST be the canonical label: v2 raw (1minute/30minute/day/week/month) or v3 `{interval}{unit}` (e.g. 5minutes, 1days) — the v3 raw interval alone (5) will NOT match.',
         tags: ['Backtest Data'],
       },
     },
