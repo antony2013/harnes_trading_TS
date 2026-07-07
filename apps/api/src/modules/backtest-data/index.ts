@@ -39,7 +39,9 @@ export const backtestData = new Elysia({ name: 'backtest-data' })
     '/backtest/data/candles/:instrumentKey/:timeframe',
     async ({ params, query, status }) => {
       const fromMs = new Date(query.fromDate).getTime()
-      const toMs = new Date(query.toDate).getTime()
+      // Upstox timestamps are IST (+05:30). Use end of the toDate IST day so intraday
+      // candles later on the toDate day are included (UTC-midnight would truncate them).
+      const toMs = new Date(`${query.toDate}T23:59:59.999+05:30`).getTime()
       if (Number.isNaN(fromMs) || Number.isNaN(toMs)) {
         return status(400, { message: 'fromDate / toDate must be valid YYYY-MM-DD' })
       }
@@ -94,8 +96,13 @@ export const backtestData = new Elysia({ name: 'backtest-data' })
       if (source === 'v3' && !unit) {
         return status(422, { message: 'unit is required when source is v3' })
       }
+      if (source === 'v3' && !/^[0-9]+$/.test(interval)) {
+        return status(422, { message: 'interval must be a positive integer when source is v3' })
+      }
       const fromMs = new Date(fromDate).getTime()
-      const toMs = new Date(toDate).getTime()
+      // Upstox timestamps are IST (+05:30). Use end of the toDate IST day so intraday
+      // candles later on the toDate day are included (UTC-midnight would truncate them).
+      const toMs = new Date(`${toDate}T23:59:59.999+05:30`).getTime()
       if (Number.isNaN(fromMs) || Number.isNaN(toMs)) {
         return status(400, { message: 'fromDate / toDate must be valid YYYY-MM-DD' })
       }
@@ -108,11 +115,12 @@ export const backtestData = new Elysia({ name: 'backtest-data' })
       const chunks = chunkRange(fromMs, toMs, sizeMs)
       let attempted = 0
 
-      try {
-        for (const [cFrom, cTo] of chunks) {
-          const toStr = toDateString(cTo)
-          const fromStr = toDateString(cFrom)
-          const raw =
+      for (const [cFrom, cTo] of chunks) {
+        const toStr = toDateString(cTo)
+        const fromStr = toDateString(cFrom)
+        let raw: any
+        try {
+          raw =
             source === 'v2'
               ? await call((cb) =>
                   v2.getHistoricalCandleData1(
@@ -134,34 +142,34 @@ export const backtestData = new Elysia({ name: 'backtest-data' })
                     cb,
                   ),
                 )
-          const rows = normalizeCandles(toPlain(raw), instrumentKey, tf)
-          if (rows.length) {
-            await db
-              .insert(candles)
-              .values(rows)
-              .onConflictDoNothing({
-                target: [candles.instrumentKey, candles.timeframe, candles.ts],
-              })
-            attempted += rows.length
-          }
+        } catch (err: any) {
+          return status(502, upstoxError(err, 'historical candle sync'))
         }
-
-        // Authoritative count of rows now in DB for this instrument + timeframe + range.
-        const [{ count }] = await db
-          .select({ count: sql<number>`count(*)` })
-          .from(candles)
-          .where(
-            and(
-              eq(candles.instrumentKey, instrumentKey),
-              eq(candles.timeframe, tf),
-              between(candles.ts, fromMs, toMs),
-            ),
-          )
-
-        return { stored: attempted, chunks: chunks.length, totalCandles: count }
-      } catch (err: any) {
-        return status(502, upstoxError(err, 'historical candle sync'))
+        const rows = normalizeCandles(toPlain(raw), instrumentKey, tf)
+        if (rows.length) {
+          await db
+            .insert(candles)
+            .values(rows)
+            .onConflictDoNothing({
+              target: [candles.instrumentKey, candles.timeframe, candles.ts],
+            })
+          attempted += rows.length
+        }
       }
+
+      // Authoritative count of rows now in DB for this instrument + timeframe + range.
+      const [{ count }] = await db
+        .select({ count: sql<number>`count(*)` })
+        .from(candles)
+        .where(
+          and(
+            eq(candles.instrumentKey, instrumentKey),
+            eq(candles.timeframe, tf),
+            between(candles.ts, fromMs, toMs),
+          ),
+        )
+
+      return { stored: attempted, chunks: chunks.length, totalCandles: count }
     },
     {
       body: t.Object({
