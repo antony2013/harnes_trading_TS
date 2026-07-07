@@ -1,0 +1,14 @@
+{
+  "name": "@harnesh-trading-ts/deepagent",
+  "private": true,
+  "scripts": {
+    "dev": "bun run --watch src/index.ts",
+    "build": "bun build src/index.ts --outdir dist --target bun",
+    "start": "bun run src/index.ts"
+  },
+  "dependencies": {
+    "@langchain/core": "^1.2.1",
+    "deepagents": "^1.10.5",
+    "langchain": "^1.5.2"
+  }
+}
