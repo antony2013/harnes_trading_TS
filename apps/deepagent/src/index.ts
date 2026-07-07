@@ -1,18 +1,32 @@
-// DeepAgents app — workspace-ready scaffold.
-//
-// Build a DeepAgents agent here using `createDeepAgent` from "deepagents":
-//
-//   import { createDeepAgent } from "deepagents"
-//   import { tool } from "langchain"
-//   import * as z from "zod"
-//
-//   const agent = await createDeepAgent({
-//     tools: [/* your tools */],
-//     systemPrompt: "You are a helpful trading assistant.",
-//   })
-//   const result = await agent.invoke({ messages: [{ role: "user", content: "..." }] })
-//
-// An LLM provider API key is required at runtime (e.g. ANTHROPIC_API_KEY or
-// OPENAI_API_KEY) — add them to apps/deepagent/.env when you build the agent.
+import readline from 'node:readline/promises'
+import { stdin as input, stdout as output } from 'node:process'
+import { buildAgent } from './agent'
 
-console.log("deepagent: workspace ready. Implement the agent in src/index.ts.")
+async function main() {
+  const agent = await buildAgent()
+  console.log('deepagent ready. Type a question (empty line or "exit" to quit).')
+  const rl = readline.createInterface({ input, output })
+  while (true) {
+    const line = (await rl.question('\n> ')).trim()
+    if (!line || line.toLowerCase() === 'exit') break
+    try {
+      const result = await agent.invoke({
+        messages: [{ role: 'user', content: line }],
+      })
+      const msgs = (result?.messages ?? []) as Array<{ content?: unknown }>
+      const last = msgs[msgs.length - 1]
+      const text =
+        typeof last?.content === 'string'
+          ? last.content
+          : last?.content
+            ? JSON.stringify(last.content)
+            : '(no output)'
+      console.log(text)
+    } catch (err: any) {
+      console.error('Agent error:', err?.message ?? String(err))
+    }
+  }
+  rl.close()
+}
+
+main()
