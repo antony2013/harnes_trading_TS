@@ -67,3 +67,51 @@ export function chunkRange(
   }
   return chunks
 }
+
+export type NewCandleRow = {
+  instrumentKey: string
+  timeframe: string
+  ts: number
+  open: number
+  high: number
+  low: number
+  close: number
+  volume: number | null
+}
+
+/**
+ * Normalize an Upstox historical-candle response into DB insert rows.
+ * Handles both the array shape (v2 and v3: [timestamp, o, h, l, c, volume])
+ * and an object shape (defensive). `raw` is the full parsed response.
+ */
+export function normalizeCandles(
+  raw: unknown,
+  instrumentKey: string,
+  timeframe: string,
+): NewCandleRow[] {
+  const list = (raw as any)?.data?.candles
+  if (!Array.isArray(list)) return []
+  const rows: NewCandleRow[] = []
+  for (const c of list) {
+    let ts: number
+    let o: number, h: number, l: number, cl: number
+    let v: number | null
+    if (Array.isArray(c)) {
+      ts = toEpochMs(c[0])
+      o = +c[1]
+      h = +c[2]
+      l = +c[3]
+      cl = +c[4]
+      v = c[5] == null ? null : +c[5]
+    } else {
+      ts = toEpochMs((c as any).timestamp ?? (c as any).ts)
+      o = +(c as any).open
+      h = +(c as any).high
+      l = +(c as any).low
+      cl = +(c as any).close
+      v = (c as any).volume == null ? null : +(c as any).volume
+    }
+    rows.push({ instrumentKey, timeframe, ts, open: o, high: h, low: l, close: cl, volume: v })
+  }
+  return rows
+}
