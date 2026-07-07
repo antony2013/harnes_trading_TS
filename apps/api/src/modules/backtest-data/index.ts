@@ -1,12 +1,15 @@
 import { Elysia, t } from 'elysia'
-import { and, eq, between, asc, sql } from 'drizzle-orm'
-import { db } from '../../db'
+import { asc } from 'drizzle-orm'
+import { drizzle } from 'drizzle-orm/bun-sqlite'
+import { Database } from 'bun:sqlite'
+import { fileURLToPath } from 'node:url'
+import { join, dirname } from 'node:path'
+import { mkdir, unlink, access } from 'node:fs/promises'
 import { candles } from '../../db/schema'
 import { UpstoxClient } from '../../config/upstox'
 import {
   timeframeLabel,
   toDateString,
-  toEpochMs,
   chunkSizeMs,
   chunkRange,
   normalizeCandles,
@@ -32,41 +35,102 @@ function upstoxError(err: any, label: string) {
   }
 }
 
+// ── Per-fetch SQLite file storage ──────────────────────────────────────────
+// Each sync writes a fresh SQLite file under apps/api/data/ named by the
+// request params, so each fetched dataset is a self-contained file. Reads open
+// the file matching the exact params (no Upstox call at read time).
+//
+// apps/api/src/modules/backtest-data/index.ts -> ../../../data/ = apps/api/data/
+const dataDir = fileURLToPath(new URL('../../../data/', import.meta.url))
+
+// DDL for the per-file candles table. Must match the `candles` definition in
+// ../../db/schema.ts. No unique index: each file is fresh per fetch (no dedup).
+const CREATE_TABLE_CANDLES = `
+CREATE TABLE IF NOT EXISTS candles (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  instrument_key TEXT NOT NULL,
+  timeframe TEXT NOT NULL,
+  ts INTEGER NOT NULL,
+  open REAL NOT NULL,
+  high REAL NOT NULL,
+  low REAL NOT NULL,
+  close REAL NOT NULL,
+  volume INTEGER,
+  created_at INTEGER NOT NULL
+)
+`
+
+/** Replace characters illegal in Windows filenames with `_`. */
+function sanitizeFileName(s: string): string {
+  return s.replace(/[\\/:*?"<>|]/g, '_')
+}
+
+/** Deterministic file name for a fetch's params (used by both sync and read). */
+function candleFileName(
+  instrumentKey: string,
+  timeframe: string,
+  fromDate: string,
+  toDate: string,
+): string {
+  return `${sanitizeFileName(instrumentKey)}-${timeframe}-${fromDate}-${toDate}.sqlite`
+}
+
+/** Create a fresh candles file at filePath (deleting any existing one), return a drizzle instance + the raw handle. */
+async function createCandlesFile(filePath: string) {
+  await mkdir(dirname(filePath), { recursive: true })
+  await unlink(filePath).catch(() => {}) // "new DB each fetch" — replace any prior file
+  const sqlite = new Database(filePath)
+  sqlite.run(CREATE_TABLE_CANDLES)
+  return { sqlite, fileDb: drizzle(sqlite, { schema: { candles } }) }
+}
+
+/** Batch inserts to stay under SQLite's variable limit (100 rows x 9 cols = 900 < 999). */
+async function insertBatched(fileDb: ReturnType<typeof createCandlesFile>['fileDb'], rows: any[]) {
+  const BATCH = 100
+  for (let i = 0; i < rows.length; i += BATCH) {
+    await fileDb.insert(candles).values(rows.slice(i, i + BATCH))
+  }
+}
+
 export const backtestData = new Elysia({ name: 'backtest-data' })
   // ── GET /backtest/data/candles/:instrumentKey/:timeframe
-  // Read locally stored candles for a date range (backtests consume this).
+  // Open the file matching the exact params and return its candles (backtests consume this).
   .get(
     '/backtest/data/candles/:instrumentKey/:timeframe',
     async ({ params, query, status }) => {
-      const fromMs = new Date(query.fromDate).getTime()
-      // Upstox timestamps are IST (+05:30). Use end of the toDate IST day so intraday
-      // candles later on the toDate day are included (UTC-midnight would truncate them).
-      const toMs = new Date(`${query.toDate}T23:59:59.999+05:30`).getTime()
-      if (Number.isNaN(fromMs) || Number.isNaN(toMs)) {
-        return status(400, { message: 'fromDate / toDate must be valid YYYY-MM-DD' })
-      }
-      if (toMs < fromMs) {
-        return status(400, { message: 'toDate must be >= fromDate' })
-      }
-      const rows = await db
-        .select({
-          ts: candles.ts,
-          open: candles.open,
-          high: candles.high,
-          low: candles.low,
-          close: candles.close,
-          volume: candles.volume,
+      const fileName = candleFileName(
+        params.instrumentKey,
+        params.timeframe,
+        query.fromDate,
+        query.toDate,
+      )
+      const filePath = join(dataDir, fileName)
+      try {
+        await access(filePath)
+      } catch {
+        return status(404, {
+          message: 'no stored data for these params — sync first',
+          file: fileName,
         })
-        .from(candles)
-        .where(
-          and(
-            eq(candles.instrumentKey, params.instrumentKey),
-            eq(candles.timeframe, params.timeframe),
-            between(candles.ts, fromMs, toMs),
-          ),
-        )
-        .orderBy(asc(candles.ts))
-      return rows
+      }
+      const sqlite = new Database(filePath)
+      try {
+        const fileDb = drizzle(sqlite, { schema: { candles } })
+        const rows = await fileDb
+          .select({
+            ts: candles.ts,
+            open: candles.open,
+            high: candles.high,
+            low: candles.low,
+            close: candles.close,
+            volume: candles.volume,
+          })
+          .from(candles)
+          .orderBy(asc(candles.ts))
+        return rows
+      } finally {
+        sqlite.close()
+      }
     },
     {
       params: t.Object({
@@ -80,7 +144,7 @@ export const backtestData = new Elysia({ name: 'backtest-data' })
       detail: {
         summary: 'Read stored historical candles (for backtests)',
         description:
-          'Returns candles previously persisted by POST /backtest/data/sync. Reads only from the local DB (no Upstox call). `timeframe` is the canonical label: v2 raw (1minute/30minute/day/week/month) or v3 `{interval}{unit}` (e.g. 1minutes, 1days).',
+          'Opens the SQLite file matching the exact instrument + timeframe + fromDate + toDate (created by a prior POST /backtest/data/sync) and returns all its candles ordered by ts. fromDate/toDate must EXACTLY match a prior sync request — they are the file key, not a sub-range filter. Returns 404 if no file matches (sync first). `timeframe` is the canonical label: v2 raw (1minute/30minute/day/week/month) or v3 `{interval}{unit}` (e.g. 1minutes, 1days).',
         tags: ['Backtest Data'],
       },
     },
@@ -88,7 +152,7 @@ export const backtestData = new Elysia({ name: 'backtest-data' })
   // ── POST /backtest/data/sync
   // Fetch historical candles from Upstox for an instrument + timeframe + range,
   // chunk the range to respect Upstox per-call lookback limits, normalize, and
-  // bulk-upsert into the local candles table (idempotent via the unique index).
+  // write them to a fresh per-fetch SQLite file under apps/api/data/.
   .post(
     '/backtest/data/sync',
     async ({ body, status }) => {
@@ -100,9 +164,7 @@ export const backtestData = new Elysia({ name: 'backtest-data' })
         return status(422, { message: 'interval must be a positive integer when source is v3' })
       }
       const fromMs = new Date(fromDate).getTime()
-      // Upstox timestamps are IST (+05:30). Use end of the toDate IST day so intraday
-      // candles later on the toDate day are included (UTC-midnight would truncate them).
-      const toMs = new Date(`${toDate}T23:59:59.999+05:30`).getTime()
+      const toMs = new Date(toDate).getTime()
       if (Number.isNaN(fromMs) || Number.isNaN(toMs)) {
         return status(400, { message: 'fromDate / toDate must be valid YYYY-MM-DD' })
       }
@@ -113,8 +175,10 @@ export const backtestData = new Elysia({ name: 'backtest-data' })
       const tf = timeframeLabel(source, interval, unit)
       const sizeMs = chunkSizeMs(tf)
       const chunks = chunkRange(fromMs, toMs, sizeMs)
-      let attempted = 0
 
+      // Fetch ALL chunks first; only create the file once every Upstox call has
+      // succeeded (avoids leaving a partial file on a 502).
+      const allRows: any[] = []
       for (const [cFrom, cTo] of chunks) {
         const toStr = toDateString(cTo)
         const fromStr = toDateString(cFrom)
@@ -133,43 +197,24 @@ export const backtestData = new Elysia({ name: 'backtest-data' })
                   ),
                 )
               : await call((cb) =>
-                  v3.getHistoricalCandleData1(
-                    instrumentKey,
-                    unit!,
-                    interval,
-                    toStr,
-                    fromStr,
-                    cb,
-                  ),
+                  v3.getHistoricalCandleData1(instrumentKey, unit!, interval, toStr, fromStr, cb),
                 )
         } catch (err: any) {
           return status(502, upstoxError(err, 'historical candle sync'))
         }
-        const rows = normalizeCandles(toPlain(raw), instrumentKey, tf)
-        if (rows.length) {
-          await db
-            .insert(candles)
-            .values(rows)
-            .onConflictDoNothing({
-              target: [candles.instrumentKey, candles.timeframe, candles.ts],
-            })
-          attempted += rows.length
-        }
+        allRows.push(...normalizeCandles(toPlain(raw), instrumentKey, tf))
       }
 
-      // Authoritative count of rows now in DB for this instrument + timeframe + range.
-      const [{ count }] = await db
-        .select({ count: sql<number>`count(*)` })
-        .from(candles)
-        .where(
-          and(
-            eq(candles.instrumentKey, instrumentKey),
-            eq(candles.timeframe, tf),
-            between(candles.ts, fromMs, toMs),
-          ),
-        )
+      const fileName = candleFileName(instrumentKey, tf, fromDate, toDate)
+      const filePath = join(dataDir, fileName)
+      const { sqlite, fileDb } = await createCandlesFile(filePath)
+      try {
+        if (allRows.length) await insertBatched(fileDb, allRows)
+      } finally {
+        sqlite.close()
+      }
 
-      return { stored: attempted, chunks: chunks.length, totalCandles: count }
+      return { stored: allRows.length, chunks: chunks.length, file: fileName }
     },
     {
       body: t.Object({
@@ -184,9 +229,9 @@ export const backtestData = new Elysia({ name: 'backtest-data' })
         upstoxApiVersion: t.Optional(t.String()),
       }),
       detail: {
-        summary: 'Fetch + store historical candles (Upstox -> DB)',
+        summary: 'Fetch + store historical candles (Upstox -> per-fetch SQLite file)',
         description:
-          'Fetches candles from Upstox for the given instrument + timeframe + date range, chunks the range to respect Upstox lookback limits, and upserts them into the local DB (idempotent — re-syncing an overlapping range does not duplicate rows). `source` selects v2 or v3 Upstox API; for v3, `unit` is required. Returns `stored` (rows attempted this call), `chunks` (number of Upstox calls), and `totalCandles` (rows now in DB for this range).',
+          'Fetches candles from Upstox for the given instrument + timeframe + date range, chunks the range to respect Upstox lookback limits, and writes them to a FRESH SQLite file under apps/api/data/ named `<instrument>-<timeframe>-<fromDate>-<toDate>.sqlite` (replacing any existing file with the same name — "new DB each fetch"). `source` selects v2 or v3 Upstox API; for v3, `unit` is required. Returns `stored` (rows written), `chunks` (number of Upstox calls), and `file` (the file name written).',
         tags: ['Backtest Data'],
       },
     },
