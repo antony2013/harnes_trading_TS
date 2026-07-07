@@ -9,6 +9,9 @@ dist/
 *.db
 *.db-journal
 
+# Per-fetch backtest candle store (regenerable via POST /backtest/data/sync)
+apps/api/data/
+
 # Drizzle Kit generated state (push-based workflow; schema.ts is the source of truth)
 apps/api/drizzle/
 
