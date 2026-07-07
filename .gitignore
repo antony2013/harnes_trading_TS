@@ -1,0 +1,22 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+.turbo/
+
+# SQLite runtime databases (regenerable via db:push)
+*.db
+*.db-journal
+
+# Drizzle Kit generated state (push-based workflow; schema.ts is the source of truth)
+apps/api/drizzle/
+
+# Secrets / env
+.env
+.env.*
+!.env.example
+
+# OS / editor
+.DS_Store
+Thumbs.db
