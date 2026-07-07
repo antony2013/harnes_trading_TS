@@ -318,7 +318,7 @@ Create `apps/api/src/modules/backtest-data/index.ts`:
 
 ```ts
 import { Elysia, t } from 'elysia'
-import { and, eq, between, asc, sql } from 'drizzle-orm'
+import { and, eq, between, asc } from 'drizzle-orm'
 import { db } from '../../db'
 import { candles } from '../../db/schema'
 import { UpstoxClient } from '../../config/upstox'
@@ -402,12 +402,9 @@ export const backtestData = new Elysia({ name: 'backtest-data' })
       },
     },
   )
-  // `sql` is used by the sync endpoint (Task 5); reference it so TS doesn't
-  // warn about an unused import in this intermediate state.
-  void sql
 ```
 
-Note: the `void sql` line is a placeholder so this intermediate file compiles before Task 5 adds the sync route that uses `sql`. Task 5 will remove that line.
+Note: this intermediate file imports only what the read route uses (`and`, `eq`, `between`, `asc`). Task 5 adds `sql` to the `drizzle-orm` import when the sync route needs `count(*)`.
 
 - [ ] **Step 2: Register the module in the app**
 
@@ -452,13 +449,15 @@ Stop the server (`Ctrl+C` or `kill %1`).
 - Consumes: all `lib.ts` helpers; `db.insert(candles).values(...).onConflictDoNothing(...)`; `sql` for `count(*)`.
 - Produces: route `POST /backtest/data/sync` returning `{ stored, chunks, totalCandles }`.
 
-- [ ] **Step 1: Remove the `void sql` placeholder**
+- [ ] **Step 1: Add `sql` to the drizzle-orm import**
 
-In `apps/api/src/modules/backtest-data/index.ts`, delete the line:
+In `apps/api/src/modules/backtest-data/index.ts`, change the drizzle-orm import line from:
 ```ts
-  // `sql` is used by the sync endpoint (Task 5); reference it so TS doesn't
-  // warn about an unused import in this intermediate state.
-  void sql
+import { and, eq, between, asc } from 'drizzle-orm'
+```
+to:
+```ts
+import { and, eq, between, asc, sql } from 'drizzle-orm'
 ```
 
 - [ ] **Step 2: Add the sync route**

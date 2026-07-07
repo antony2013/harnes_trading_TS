@@ -12,6 +12,9 @@ dist/
 # Drizzle Kit generated state (push-based workflow; schema.ts is the source of truth)
 apps/api/drizzle/
 
+# Superpowers SDD scratch (briefs, reports, review packages, progress ledger)
+.superpowers/
+
 # Secrets / env
 .env
 .env.*
