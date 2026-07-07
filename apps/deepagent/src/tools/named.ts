@@ -143,3 +143,89 @@ export const marketStatus = tool(
     }),
   },
 )
+
+// 8) Sync (fetch + store) historical candles to a per-fetch SQLite file.
+export const syncCandles = tool(
+  async ({ instrument_key, source, interval, unit, from_date, to_date }) => {
+    if (source === 'v3' && !unit) {
+      return JSON.stringify({ error: 'unit is required when source=v3 (minutes|hours|days)' })
+    }
+    return apiCall('POST', '/backtest/data/sync', undefined, {
+      instrumentKey: instrument_key,
+      source,
+      interval,
+      unit,
+      fromDate: from_date,
+      toDate: to_date,
+    })
+  },
+  {
+    name: 'sync_candles',
+    description:
+      'Fetch historical candles from Upstox and STORE them to a local SQLite file for later backtest reads. source=v2 interval 1minute|30minute|day|week|month (no unit); source=v3 needs unit minutes|hours|days + numeric interval. Returns {stored, chunks, file}. Example: instrument_key="NSE_INDEX|Nifty 50", source="v3", interval="5", unit="minutes", from_date="2026-06-01", to_date="2026-06-30".',
+    schema: z.object({
+      instrument_key: z.string().min(1).describe('Upstox instrument key, e.g. "NSE_INDEX|Nifty 50"'),
+      source: z.enum(['v2', 'v3']).describe('Upstox API version'),
+      interval: z.string().min(1).describe('v2: 1minute|30minute|day|week|month. v3: numeric string e.g. "5"'),
+      unit: z.enum(['minutes', 'hours', 'days']).optional().describe('Required when source=v3'),
+      from_date: z.string().describe('Start date YYYY-MM-DD'),
+      to_date: z.string().describe('End date YYYY-MM-DD'),
+    }),
+  },
+)
+
+// 9) Read previously-STORED candles for a sub-range.
+export const readCandles = tool(
+  async ({ instrument_key, timeframe, from_date, to_date }) =>
+    apiCall(
+      'GET',
+      `/backtest/data/candles/${enc(instrument_key)}/${enc(timeframe)}`,
+      { fromDate: from_date, toDate: to_date },
+    ),
+  {
+    name: 'read_candles',
+    description:
+      'Read previously-STORED historical candles (from a prior sync_candles) for a sub-range. timeframe is the canonical label: v2 raw (1minute|30minute|day|week|month) or v3 {interval}{unit} (e.g. 5minutes, 1days). Returns an array of {ts,open,high,low,close,volume}. 404 if no synced file covers the range. Example: instrument_key="NSE_INDEX|Nifty 50", timeframe="5minutes", from_date="2026-06-05", to_date="2026-06-10".',
+    schema: z.object({
+      instrument_key: z.string().min(1).describe('Upstox instrument key'),
+      timeframe: z.string().min(1).describe('Canonical timeframe label, e.g. "5minutes", "1days", "day"'),
+      from_date: z.string().describe('Start date YYYY-MM-DD'),
+      to_date: z.string().describe('End date YYYY-MM-DD'),
+    }),
+  },
+)
+
+// 10) Company profile (fundamentals) by ISIN.
+export const companyProfile = tool(
+  async ({ isin }) => apiCall('GET', `/fundamentals/profile/${enc(isin)}`),
+  {
+    name: 'company_profile',
+    description:
+      'Get the company profile (fundamentals) for an ISIN. Example: isin="INE002A01018".',
+    schema: z.object({
+      isin: z.string().min(1).describe('ISIN code, e.g. "INE002A01018"'),
+    }),
+  },
+)
+
+// 11) Market news.
+export const news = tool(
+  async ({ category, instrument_keys }) => {
+    if (category === 'instrument_keys' && !instrument_keys) {
+      return JSON.stringify({ error: 'instrument_keys is required when category=instrument_keys' })
+    }
+    return apiCall('GET', '/news', { category, instrumentKeys: instrument_keys })
+  },
+  {
+    name: 'news',
+    description:
+      'Get market news articles. category is instrument_keys|positions|holdings. When category=instrument_keys, pass instrument_keys (comma list). Example: category="instrument_keys", instrument_keys="NSE_EQ|INE002A01018".',
+    schema: z.object({
+      category: z.enum(['instrument_keys', 'positions', 'holdings']).describe('News category'),
+      instrument_keys: z
+        .string()
+        .optional()
+        .describe('Comma-separated instrument keys; required when category=instrument_keys'),
+    }),
+  },
+)
