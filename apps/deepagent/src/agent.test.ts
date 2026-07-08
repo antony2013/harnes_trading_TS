@@ -2,7 +2,7 @@ import { test, expect, beforeEach } from 'bun:test'
 import { mkdtempSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { buildModel, resolveAgentConfig, workspaceDir, WORKSPACE_PERMISSIONS, buildBackend, buildAgent, PTC_ALLOWLIST } from './agent'
+import { buildModel, resolveAgentConfig, workspaceDir, WORKSPACE_PERMISSIONS, buildBackend, buildAgent, PTC_ALLOWLIST, buildInterpreterMiddleware } from './agent'
 
 beforeEach(() => {
   process.env.AGENT_SETTINGS_PATH = `/tmp/agent-settings-${Math.random().toString(36).slice(2)}.json`
@@ -94,4 +94,9 @@ test('PTC_ALLOWLIST: 10 read-only data tools, excludes sync_candles + call_api',
   ])
   expect(PTC_ALLOWLIST).not.toContain('sync_candles')
   expect(PTC_ALLOWLIST).not.toContain('call_api')
+})
+
+test('buildInterpreterMiddleware: returns a truthy middleware object without throwing', () => {
+  const mw = buildInterpreterMiddleware()
+  expect(mw).toBeTruthy()
 })

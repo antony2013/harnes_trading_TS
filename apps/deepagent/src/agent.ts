@@ -1,5 +1,6 @@
 import { createDeepAgent, FilesystemBackend } from 'deepagents'
 import type { FilesystemPermission } from 'deepagents'
+import { createCodeInterpreterMiddleware } from '@langchain/quickjs'
 import type { BaseLanguageModel } from '@langchain/core/language_models/base'
 import { ChatAnthropic } from '@langchain/anthropic'
 import { ChatOpenAI } from '@langchain/openai'
@@ -68,6 +69,15 @@ export const PTC_ALLOWLIST: string[] = [
   'company_profile',
   'news',
 ]
+
+/** Build the code-interpreter middleware: eval tool + PTC over the read-only data tools,
+ *  with a 30s timeout to allow multi-tool network orchestration from a single eval. */
+export function buildInterpreterMiddleware() {
+  return createCodeInterpreterMiddleware({
+    ptc: PTC_ALLOWLIST,
+    executionTimeoutMs: 30_000,
+  })
+}
 
 export function buildModel(cfg: AgentConfig): BaseLanguageModel {
   switch (cfg.provider) {
