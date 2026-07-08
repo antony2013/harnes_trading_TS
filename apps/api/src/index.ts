@@ -10,6 +10,7 @@ import { fundamentals } from './modules/fundamentals'
 import { news } from './modules/news'
 import { stream } from './modules/stream'
 import { backtestData } from './modules/backtest-data'
+import { agent } from './modules/agent'
 
 const app = new Elysia()
   .use(
@@ -33,6 +34,7 @@ const app = new Elysia()
   .use(news)
   .use(stream)
   .use(backtestData)
+  .use(agent)
   .get('/', () => 'Hello from Harnesh Trading API')
   .listen(3000)
 
