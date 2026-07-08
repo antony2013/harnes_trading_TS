@@ -24,7 +24,7 @@
 
 	const suggestions = ['What is the NIFTY 50 LTP?', 'Sync 1d candles for RELIANCE', 'Explain instrument keys'];
 	const configured = $derived(!!$agentSettings && !!$agentSettings.model);
-	const modelLabel = $derived($agentSettings ? `${$agentSettings.provider}:${$agentSettings.model}` : 'not configured');
+	const modelLabel = $derived($agentSettings && $agentSettings.model ? `${$agentSettings.provider}:${$agentSettings.model}` : 'not configured');
 </script>
 
 <section class="chat">

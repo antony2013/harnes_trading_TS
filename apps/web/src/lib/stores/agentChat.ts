@@ -116,6 +116,18 @@ export async function sendMessage(text: string): Promise<void> {
 	} finally {
 		streaming.set(false);
 		controller = null;
+		// If the assistant message never received any tokens or tool steps
+		// (e.g. Stop pressed before the first token, or an abort), remove the
+		// dangling empty "thinking…" bubble. A message that received content
+		// or tool steps must be preserved.
+		if (currentAssistantId) {
+			const id = currentAssistantId;
+			const cur = get(messages).find((m) => m.id === id);
+			if (cur && cur.content === '' && (!cur.tools || cur.tools.length === 0)) {
+				messages.update((m) => m.filter((msg) => msg.id !== id));
+			}
+		}
+		currentAssistantId = null;
 	}
 }
 

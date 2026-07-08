@@ -47,6 +47,11 @@
 		{/each}
 	</nav>
 
+	<nav class="links">
+		<a href="/chat" class="navlink">Chat</a>
+		<a href="/settings" class="navlink">Settings</a>
+	</nav>
+
 	<div class="status" data-status={$marketFeed.status} title={`Feed: ${STATUS_LABEL[$marketFeed.status]}`}>
 		<span class="dot"></span>
 		<span class="status-text">{STATUS_LABEL[$marketFeed.status]}</span>
@@ -180,9 +185,17 @@
 		100% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0); }
 	}
 
+	.links { display: flex; gap: 0.4rem; flex: 0 0 auto; }
+	.navlink {
+		font-size: 12px; font-weight: 600; letter-spacing: 0.4px; text-transform: uppercase;
+		color: #8a97b5; text-decoration: none; padding: 0.3rem 0.5rem; border-radius: 6px;
+	}
+	.navlink:hover { color: #e7ecf5; background: #121a33; }
 	@media (max-width: 640px) {
 		.brand-name .dim { display: none; }
 		.status-text { display: none; }
 		.hdr { gap: 0.75rem; padding: 0.4rem 0.6rem; }
+		.links { gap: 0.25rem; }
+		.navlink { padding: 0.25rem 0.35rem; }
 	}
 </style>
