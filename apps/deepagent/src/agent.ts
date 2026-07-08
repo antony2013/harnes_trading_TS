@@ -1,9 +1,10 @@
 import { createDeepAgent } from 'deepagents'
+import type { FilesystemPermission } from 'deepagents'
 import type { BaseLanguageModel } from '@langchain/core/language_models/base'
 import { ChatAnthropic } from '@langchain/anthropic'
 import { ChatOpenAI } from '@langchain/openai'
 import { ChatOllama } from '@langchain/ollama'
-import { readFileSync, existsSync } from 'node:fs'
+import { readFileSync, existsSync, mkdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { allTools } from './tools'
@@ -28,6 +29,23 @@ export interface AgentConfig {
 }
 
 const OLLAMA_DEFAULT = 'http://localhost:11434'
+
+/** Default workspace root: apps/api/data/agent-workspace (mirrors settingsPath()). */
+function defaultWorkspacePath(): string {
+  const here = dirname(fileURLToPath(import.meta.url))
+  return join(here, '../../api/data/agent-workspace')
+}
+
+/** Resolve the agent workspace dir: AGENT_WORKSPACE_DIR env, else the default. */
+export function workspaceDir(): string {
+  return process.env.AGENT_WORKSPACE_DIR || defaultWorkspacePath()
+}
+
+/** Allow-all within the workspace. virtualMode already confines paths to rootDir;
+ *  this explicit rule documents intent and makes future deny rules a one-liner. */
+export const WORKSPACE_PERMISSIONS: FilesystemPermission[] = [
+  { operations: ['read', 'write'], paths: ['/**'], mode: 'allow' },
+]
 
 export function buildModel(cfg: AgentConfig): BaseLanguageModel {
   switch (cfg.provider) {
