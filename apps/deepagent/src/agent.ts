@@ -87,6 +87,21 @@ export function buildInterpreterMiddleware(opts?: { subagents?: boolean }) {
   })
 }
 
+const QUANT_PROMPT = `You are a quant analyst for the Indian stock market. Fetch candles with the market-data tools and compute indicators / aggregations in eval (RSI, MACD, moving averages, returns, vol). Return concise numeric results. Do not write files.`
+
+const GENERAL_PURPOSE_PROMPT = `You are a general-purpose research subagent for the Indian stock market. Use the market-data tools to search instruments, fetch LTP/OHLC/quotes, option chain, market status, company profile, and news. Summarize what you find concisely. Do not write files.`
+
+const REPORTER_PROMPT = `You are a report writer. Given analysis results, write a clean markdown report to the workspace using write_file/edit_file. You have no market-data tools — work from what the caller provides.`
+
+/** Subagents the parent can delegate to via the task tool or the eval task() global.
+ *  general-purpose is defined here (named) to suppress the framework's auto
+ *  general-purpose, which would inherit sync_candles + call_api. */
+export const SUBAGENTS = [
+  { name: 'general-purpose', description: 'Research/fetch market data: instrument search, LTP, quotes, option chain, news, company profile.', systemPrompt: GENERAL_PURPOSE_PROMPT, tools: READ_ONLY_TOOLS },
+  { name: 'quant', description: 'Fetch candles and compute indicators/aggregations in eval (RSI, MACD, returns, vol).', systemPrompt: QUANT_PROMPT, tools: READ_ONLY_TOOLS, middleware: [buildInterpreterMiddleware({ subagents: false })] },
+  { name: 'reporter', description: 'Write a markdown report/artifact to the workspace from provided analysis.', systemPrompt: REPORTER_PROMPT, tools: [] },
+]
+
 export function buildModel(cfg: AgentConfig): BaseLanguageModel {
   switch (cfg.provider) {
     case 'anthropic':

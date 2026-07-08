@@ -2,7 +2,7 @@ import { test, expect, beforeEach } from 'bun:test'
 import { mkdtempSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { buildModel, resolveAgentConfig, workspaceDir, WORKSPACE_PERMISSIONS, buildBackend, buildAgent, PTC_ALLOWLIST, buildInterpreterMiddleware, READ_ONLY_TOOLS } from './agent'
+import { buildModel, resolveAgentConfig, workspaceDir, WORKSPACE_PERMISSIONS, buildBackend, buildAgent, PTC_ALLOWLIST, buildInterpreterMiddleware, READ_ONLY_TOOLS, SUBAGENTS } from './agent'
 
 beforeEach(() => {
   process.env.AGENT_SETTINGS_PATH = `/tmp/agent-settings-${Math.random().toString(36).slice(2)}.json`
@@ -119,4 +119,28 @@ test('READ_ONLY_TOOLS: 10 read-only data tools from allTools, excludes sync_cand
 test('buildInterpreterMiddleware: { subagents: false } returns truthy without throwing', () => {
   const mw = buildInterpreterMiddleware({ subagents: false })
   expect(mw).toBeTruthy()
+})
+
+test('SUBAGENTS: exactly 3 named subagents, no duplicates, general-purpose present', () => {
+  const names = SUBAGENTS.map((s: any) => s.name)
+  expect(names).toHaveLength(3)
+  expect(new Set(names).size).toBe(3)
+  expect(names).toContain('general-purpose')
+  expect(names).toContain('quant')
+  expect(names).toContain('reporter')
+})
+
+test('SUBAGENTS: general-purpose + quant use READ_ONLY_TOOLS; reporter tools empty', () => {
+  const byName = Object.fromEntries(SUBAGENTS.map((s: any) => [s.name, s]))
+  expect(byName['general-purpose'].tools).toBe(READ_ONLY_TOOLS)
+  expect(byName['quant'].tools).toBe(READ_ONLY_TOOLS)
+  expect(byName['reporter'].tools).toEqual([])
+})
+
+test('SUBAGENTS: quant has middleware; general-purpose + reporter have none', () => {
+  const byName = Object.fromEntries(SUBAGENTS.map((s: any) => [s.name, s]))
+  expect(Array.isArray(byName['quant'].middleware)).toBe(true)
+  expect(byName['quant'].middleware.length).toBeGreaterThan(0)
+  expect(byName['general-purpose'].middleware).toBeUndefined()
+  expect(byName['reporter'].middleware).toBeUndefined()
 })
