@@ -1,5 +1,6 @@
 import { createDeepAgent, FilesystemBackend } from 'deepagents'
 import type { FilesystemPermission } from 'deepagents'
+import { createCodeInterpreterMiddleware } from '@langchain/quickjs'
 import type { BaseLanguageModel } from '@langchain/core/language_models/base'
 import { ChatAnthropic } from '@langchain/anthropic'
 import { ChatOpenAI } from '@langchain/openai'
@@ -18,7 +19,8 @@ Use the provided tools to answer the user's question.
 - If a tool returns an error object, read it and retry with corrected parameters.
 - If the API is unreachable, tell the user to start apps/api (bun run dev in apps/api).
 Be concise. Prefer tools over guessing.
-You have a virtual filesystem (ls, read_file, write_file, edit_file, glob, grep) rooted at a workspace directory. Use it to persist analysis, notes, and intermediate results across the conversation. Prefer write_file for new artifacts and edit_file for small changes.`
+You have a virtual filesystem (ls, read_file, write_file, edit_file, glob, grep) rooted at a workspace directory. Use it to persist analysis, notes, and intermediate results across the conversation. Prefer write_file for new artifacts and edit_file for small changes.
+You have an \`eval\` tool that runs JavaScript in a sandboxed QuickJS interpreter (no filesystem, network, or shell access). The read-only market-data tools are available inside \`eval\` as \`tools.*\` (e.g. \`tools.get_ltp\`, \`tools.historical_candles\`, \`tools.search_instruments\`). Use \`eval\` for loops, parallel/batched fetches, and deterministic transforms (indicators, aggregation, filtering) instead of one tool call per turn. For multi-step data work, write a workflow in \`eval\`.`
 
 export type Provider = 'anthropic' | 'openai' | 'ollama' | 'custom'
 
@@ -53,6 +55,31 @@ export function buildBackend(root: string): FilesystemBackend {
   return new FilesystemBackend({ rootDir: root, virtualMode: true })
 }
 
+/** PTC allowlist: read-only market-data tools exposed inside the eval interpreter.
+ *  Excludes sync_candles (server-side SQLite writes) and call_api (arbitrary endpoint
+ *  passthrough) — this list is the interpreter's permission boundary. */
+export const PTC_ALLOWLIST: string[] = [
+  'search_instruments',
+  'get_ltp',
+  'get_ohlc_quote',
+  'historical_candles',
+  'intraday_candles',
+  'option_chain',
+  'market_status',
+  'read_candles',
+  'company_profile',
+  'news',
+]
+
+/** Build the code-interpreter middleware: eval tool + PTC over the read-only data tools,
+ *  with a 30s timeout to allow multi-tool network orchestration from a single eval. */
+export function buildInterpreterMiddleware() {
+  return createCodeInterpreterMiddleware({
+    ptc: PTC_ALLOWLIST,
+    executionTimeoutMs: 30_000,
+  })
+}
+
 export function buildModel(cfg: AgentConfig): BaseLanguageModel {
   switch (cfg.provider) {
     case 'anthropic':
@@ -81,6 +108,7 @@ export async function buildAgent(cfg: AgentConfig) {
     systemPrompt: SYSTEM_PROMPT,
     backend: buildBackend(root),
     permissions: WORKSPACE_PERMISSIONS,
+    middleware: [buildInterpreterMiddleware()],
   })
 }
 
