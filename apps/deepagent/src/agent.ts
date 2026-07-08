@@ -1,4 +1,4 @@
-import { createDeepAgent } from 'deepagents'
+import { createDeepAgent, FilesystemBackend } from 'deepagents'
 import type { FilesystemPermission } from 'deepagents'
 import type { BaseLanguageModel } from '@langchain/core/language_models/base'
 import { ChatAnthropic } from '@langchain/anthropic'
@@ -46,6 +46,11 @@ export function workspaceDir(): string {
 export const WORKSPACE_PERMISSIONS: FilesystemPermission[] = [
   { operations: ['read', 'write'], paths: ['/**'], mode: 'allow' },
 ]
+
+/** Build the sandboxed filesystem backend rooted at `root`. */
+export function buildBackend(root: string): FilesystemBackend {
+  return new FilesystemBackend({ rootDir: root, virtualMode: true })
+}
 
 export function buildModel(cfg: AgentConfig): BaseLanguageModel {
   switch (cfg.provider) {

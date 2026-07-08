@@ -1,5 +1,8 @@
 import { test, expect, beforeEach } from 'bun:test'
-import { buildModel, resolveAgentConfig, workspaceDir, WORKSPACE_PERMISSIONS } from './agent'
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { buildModel, resolveAgentConfig, workspaceDir, WORKSPACE_PERMISSIONS, buildBackend } from './agent'
 
 beforeEach(() => {
   process.env.AGENT_SETTINGS_PATH = `/tmp/agent-settings-${Math.random().toString(36).slice(2)}.json`
@@ -48,4 +51,12 @@ test('WORKSPACE_PERMISSIONS: single allow-all rule', () => {
   expect(WORKSPACE_PERMISSIONS).toEqual([
     { operations: ['read', 'write'], paths: ['/**'], mode: 'allow' },
   ])
+})
+
+test('buildBackend: write/read round-trips through rootDir', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'da-'))
+  const b = buildBackend(root)
+  await b.write('notes.txt', 'hello')
+  const r: any = await b.read('notes.txt')
+  expect(r.content).toBe('hello')
 })
