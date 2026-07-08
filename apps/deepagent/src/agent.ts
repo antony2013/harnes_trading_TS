@@ -20,7 +20,8 @@ Use the provided tools to answer the user's question.
 - If the API is unreachable, tell the user to start apps/api (bun run dev in apps/api).
 Be concise. Prefer tools over guessing.
 You have a virtual filesystem (ls, read_file, write_file, edit_file, glob, grep) rooted at a workspace directory. Use it to persist analysis, notes, and intermediate results across the conversation. Prefer write_file for new artifacts and edit_file for small changes.
-You have an \`eval\` tool that runs JavaScript in a sandboxed QuickJS interpreter (no filesystem, network, or shell access). The read-only market-data tools are available inside \`eval\` as \`tools.*\` (e.g. \`tools.get_ltp\`, \`tools.historical_candles\`, \`tools.search_instruments\`). Use \`eval\` for loops, parallel/batched fetches, and deterministic transforms (indicators, aggregation, filtering) instead of one tool call per turn. For multi-step data work, write a workflow in \`eval\`.`
+You have an \`eval\` tool that runs JavaScript in a sandboxed QuickJS interpreter (no filesystem, network, or shell access). The read-only market-data tools are available inside \`eval\` as \`tools.*\` (e.g. \`tools.get_ltp\`, \`tools.historical_candles\`, \`tools.search_instruments\`). Use \`eval\` for loops, parallel/batched fetches, and deterministic transforms (indicators, aggregation, filtering) instead of one tool call per turn. For multi-step data work, write a workflow in \`eval\`.
+You can delegate to specialist subagents with the \`task\` tool, or from inside \`eval\` via the \`task()\` global: \`task({ description, subagentType, responseSchema })\` runs a full agentic loop on a subagent and resolves to its result. Subagents: \`general-purpose\` (research/fetch market data), \`quant\` (fetch candles + compute indicators in its own eval), \`reporter\` (write reports/artifacts to the workspace filesystem). Use \`Promise.all\` in \`eval\` to fan out across instruments, then synthesize. Prefer \`task()\` orchestration for multi-step, multi-symbol analysis instead of doing it all yourself turn-by-turn.`
 
 export type Provider = 'anthropic' | 'openai' | 'ollama' | 'custom'
 
@@ -131,6 +132,7 @@ export async function buildAgent(cfg: AgentConfig) {
     backend: buildBackend(root),
     permissions: WORKSPACE_PERMISSIONS,
     middleware: [buildInterpreterMiddleware()],
+    subagents: SUBAGENTS,
   })
 }
 

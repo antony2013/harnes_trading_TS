@@ -144,3 +144,11 @@ test('SUBAGENTS: quant has middleware; general-purpose + reporter have none', ()
   expect(byName['general-purpose'].middleware).toBeUndefined()
   expect(byName['reporter'].middleware).toBeUndefined()
 })
+
+test('buildAgent: constructs with subagents without throwing', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'da-')) + '/sub'
+  process.env.AGENT_WORKSPACE_DIR = root
+  const agent = await buildAgent({ provider: 'ollama', apiKey: '', baseUrl: 'http://localhost:11434', model: 'llama3' })
+  expect(agent).toBeTruthy()
+  expect(existsSync(root)).toBe(true)
+})
