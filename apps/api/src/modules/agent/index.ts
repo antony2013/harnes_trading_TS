@@ -1,4 +1,4 @@
-import { Elysia, t } from 'elysia'
+import { Elysia, t, sse } from 'elysia'
 import {
   readSettings,
   writeSettings,
@@ -7,7 +7,7 @@ import {
   type AgentSettings,
   type Provider,
 } from './settings'
-import { buildModel, type AgentConfig } from '@harnesh-trading-ts/deepagent'
+import { buildAgent, buildModel, type AgentConfig } from '@harnesh-trading-ts/deepagent'
 
 const PROVIDER_LITERAL = t.Union([
   t.Literal('anthropic'),
@@ -121,5 +121,72 @@ export const agent = new Elysia({ name: 'agent' })
         apiKey: t.Optional(t.String()),
       }),
       detail: { summary: 'Test LLM provider connection (does NOT save)', tags: ['Agent'] },
+    },
+  )
+  .post(
+    '/agent/chat',
+    async function* ({ body, set, request }) {
+      set.headers['Cache-Control'] = 'no-cache'
+      set.headers['Connection'] = 'keep-alive'
+
+      const s = readSettings()
+      if (!s || !s.model) {
+        set.status = 400
+        yield sse({ event: 'error', data: { message: 'Agent not configured. Open /settings first.' } })
+        return
+      }
+
+      let agent
+      try {
+        agent = await buildAgent(s)
+      } catch (err: any) {
+        yield sse({ event: 'error', data: { message: err?.message ?? 'Failed to build agent' } })
+        return
+      }
+
+      try {
+        // LangChain v2 streamEvents: a single interleaved event stream.
+        // deepagents' typed override targets v3; cast to any to use the stable v2 events.
+        const stream = (agent as any).streamEvents(
+          { messages: body.messages },
+          { version: 'v2', signal: request.signal },
+        )
+        for await (const ev of stream) {
+          if (ev.event === 'on_chat_model_stream') {
+            const chunk = ev.data?.chunk
+            const text = typeof chunk?.content === 'string' ? chunk.content : ''
+            if (text) yield sse({ event: 'token', data: { text } })
+          } else if (ev.event === 'on_tool_start') {
+            yield sse({ event: 'tool_call', data: { name: ev.name, input: ev.data?.input ?? null } })
+          } else if (ev.event === 'on_tool_end') {
+            const out = ev.data?.output
+            const outStr =
+              typeof out === 'string' ? out :
+              typeof out?.content === 'string' ? out.content :
+              JSON.stringify(out)
+            yield sse({ event: 'tool_result', data: { name: ev.name, output: outStr } })
+          }
+        }
+        yield sse({ event: 'done', data: {} })
+      } catch (err: any) {
+        if (err?.name === 'AbortError') return
+        yield sse({ event: 'error', data: { message: err?.message ?? 'Agent stream failed' } })
+      }
+    },
+    {
+      body: t.Object({
+        messages: t.Array(
+          t.Object({
+            role: t.Union([t.Literal('user'), t.Literal('assistant'), t.Literal('system')]),
+            content: t.String(),
+          }),
+          { minItems: 1 },
+        ),
+      }),
+      detail: {
+        summary: 'Agent chat (SSE stream: token/tool_call/tool_result/done/error)',
+        tags: ['Agent'],
+        hide: true, // stream — not executable via Swagger "Try it out"
+      },
     },
   )

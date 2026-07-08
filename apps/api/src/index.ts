@@ -21,7 +21,7 @@ const app = new Elysia()
       },
       // SSE + WS are streaming endpoints — can't be executed via Swagger "Try it out".
       // SSE route hides itself via detail.hide; WS route needs plugin-level exclude (.ws() ignores detail.hide).
-      exclude: { paths: ['/stream/market-data'] },
+      exclude: { paths: ['/stream/market-data', '/agent/chat'] },
     }),
   )
   .use(instruments)
