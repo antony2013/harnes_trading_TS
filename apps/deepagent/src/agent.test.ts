@@ -67,3 +67,14 @@ test('buildAgent: creates workspace dir if missing', async () => {
   await buildAgent({ provider: 'ollama', apiKey: '', baseUrl: 'http://localhost:11434', model: 'llama3' })
   expect(existsSync(root)).toBe(true)
 })
+
+// Security invariant: virtualMode must confine the agent to rootDir.
+// A '..' escape returns an error result (never content), guarding the
+// sensitive sibling files in apps/api/data/ (e.g. agent-settings.json).
+test('buildBackend: rejects path traversal outside rootDir', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'da-'))
+  const b = buildBackend(root)
+  const r: any = await b.read('../escape.txt')
+  expect(r.error).toMatch(/Path traversal not allowed/)
+  expect(r.content).toBeUndefined()
+})
