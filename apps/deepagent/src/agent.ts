@@ -1,4 +1,11 @@
 import { createDeepAgent } from 'deepagents'
+import type { BaseLanguageModel } from '@langchain/core/language_models/base'
+import { ChatAnthropic } from '@langchain/anthropic'
+import { ChatOpenAI } from '@langchain/openai'
+import { ChatOllama } from '@langchain/ollama'
+import { readFileSync, existsSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+import { dirname, join } from 'node:path'
 import { allTools } from './tools'
 
 export const SYSTEM_PROMPT = `You are a trading assistant for the Indian stock market, backed by the local Upstox trading API.
@@ -11,12 +18,76 @@ Use the provided tools to answer the user's question.
 - If the API is unreachable, tell the user to start apps/api (bun run dev in apps/api).
 Be concise. Prefer tools over guessing.`
 
-export async function buildAgent() {
-  const model = process.env.DEEPAGENT_MODEL
-  if (!model) {
-    throw new Error(
-      'Set DEEPAGENT_MODEL in apps/deepagent/.env (e.g. "anthropic:claude-sonnet-4-6" or "openai:gpt-4o-mini")',
-    )
+export type Provider = 'anthropic' | 'openai' | 'ollama' | 'custom'
+
+export interface AgentConfig {
+  provider: Provider
+  apiKey: string
+  baseUrl: string
+  model: string
+}
+
+const OLLAMA_DEFAULT = 'http://localhost:11434'
+
+export function buildModel(cfg: AgentConfig): BaseLanguageModel {
+  switch (cfg.provider) {
+    case 'anthropic':
+      return new ChatAnthropic({ model: cfg.model, apiKey: cfg.apiKey })
+    case 'openai':
+      return new ChatOpenAI({ model: cfg.model, apiKey: cfg.apiKey })
+    case 'ollama':
+      return new ChatOllama({ model: cfg.model, baseUrl: cfg.baseUrl || OLLAMA_DEFAULT })
+    case 'custom':
+      return new ChatOpenAI({ model: cfg.model, apiKey: cfg.apiKey, configuration: { baseURL: cfg.baseUrl } })
   }
+}
+
+export async function buildAgent(cfg: AgentConfig) {
+  if (!cfg.model) {
+    throw new Error('Agent config missing model')
+  }
+  const model = buildModel(cfg)
   return createDeepAgent({ model, tools: allTools, systemPrompt: SYSTEM_PROMPT })
+}
+
+function defaultSettingsPath(): string {
+  // apps/deepagent/src/agent.ts -> ../../api/data/agent-settings.json
+  const here = dirname(fileURLToPath(import.meta.url))
+  return join(here, '../../api/data/agent-settings.json')
+}
+
+function settingsPath(): string {
+  return process.env.AGENT_SETTINGS_PATH || defaultSettingsPath()
+}
+
+export function resolveAgentConfig(): AgentConfig | null {
+  // 1. settings file
+  const path = settingsPath()
+  if (existsSync(path)) {
+    try {
+      const raw = JSON.parse(readFileSync(path, 'utf8'))
+      if (raw && raw.provider && raw.model) {
+        return {
+          provider: raw.provider as Provider,
+          apiKey: typeof raw.apiKey === 'string' ? raw.apiKey : '',
+          baseUrl: typeof raw.baseUrl === 'string' ? raw.baseUrl : '',
+          model: raw.model,
+        }
+      }
+    } catch {
+      /* fall through to env */
+    }
+  }
+  // 2. env fallback (legacy CLI): DEEPAGENT_MODEL = "provider:model"
+  const envModel = process.env.DEEPAGENT_MODEL
+  if (envModel && envModel.includes(':')) {
+    const idx = envModel.indexOf(':')
+    const provider = envModel.slice(0, idx) as Provider
+    const model = envModel.slice(idx + 1)
+    const apiKey =
+      provider === 'anthropic' ? process.env.ANTHROPIC_API_KEY || '' :
+      provider === 'openai' ? process.env.OPENAI_API_KEY || '' : ''
+    return { provider, model, apiKey, baseUrl: provider === 'ollama' ? OLLAMA_DEFAULT : '' }
+  }
+  return null
 }
