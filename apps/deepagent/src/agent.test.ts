@@ -100,3 +100,11 @@ test('buildInterpreterMiddleware: returns a truthy middleware object without thr
   const mw = buildInterpreterMiddleware()
   expect(mw).toBeTruthy()
 })
+
+test('buildAgent: constructs with interpreter middleware without throwing', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'da-')) + '/mw'
+  process.env.AGENT_WORKSPACE_DIR = root
+  const agent = await buildAgent({ provider: 'ollama', apiKey: '', baseUrl: 'http://localhost:11434', model: 'llama3' })
+  expect(agent).toBeTruthy()
+  expect(existsSync(root)).toBe(true)
+})
