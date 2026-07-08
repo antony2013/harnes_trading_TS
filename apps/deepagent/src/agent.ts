@@ -71,12 +71,19 @@ export const PTC_ALLOWLIST: string[] = [
   'news',
 ]
 
-/** Build the code-interpreter middleware: eval tool + PTC over the read-only data tools,
- *  with a 30s timeout to allow multi-tool network orchestration from a single eval. */
-export function buildInterpreterMiddleware() {
+/** Read-only market-data tools = allTools filtered to the PTC_ALLOWLIST names.
+ *  Reuses the Phase A boundary as the single source of truth (no name drift).
+ *  Excludes sync_candles + call_api — subagents never get the write/passthrough tools. */
+export const READ_ONLY_TOOLS = allTools.filter((t: any) => PTC_ALLOWLIST.includes(t.name))
+
+/** Build the code-interpreter middleware. opts.subagents === false disables the
+ *  dynamic task() global (used for the quant subagent to bound recursion); the
+ *  default (no arg) preserves the Phase A parent behavior (task() enabled). */
+export function buildInterpreterMiddleware(opts?: { subagents?: boolean }) {
   return createCodeInterpreterMiddleware({
     ptc: PTC_ALLOWLIST,
     executionTimeoutMs: 30_000,
+    ...(opts?.subagents === false ? { subagents: false } : {}),
   })
 }
 

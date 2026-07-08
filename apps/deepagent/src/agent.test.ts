@@ -2,7 +2,7 @@ import { test, expect, beforeEach } from 'bun:test'
 import { mkdtempSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { buildModel, resolveAgentConfig, workspaceDir, WORKSPACE_PERMISSIONS, buildBackend, buildAgent, PTC_ALLOWLIST, buildInterpreterMiddleware } from './agent'
+import { buildModel, resolveAgentConfig, workspaceDir, WORKSPACE_PERMISSIONS, buildBackend, buildAgent, PTC_ALLOWLIST, buildInterpreterMiddleware, READ_ONLY_TOOLS } from './agent'
 
 beforeEach(() => {
   process.env.AGENT_SETTINGS_PATH = `/tmp/agent-settings-${Math.random().toString(36).slice(2)}.json`
@@ -107,4 +107,16 @@ test('buildAgent: constructs with interpreter middleware without throwing', asyn
   const agent = await buildAgent({ provider: 'ollama', apiKey: '', baseUrl: 'http://localhost:11434', model: 'llama3' })
   expect(agent).toBeTruthy()
   expect(existsSync(root)).toBe(true)
+})
+
+test('READ_ONLY_TOOLS: 10 read-only data tools from allTools, excludes sync_candles + call_api', () => {
+  const names = READ_ONLY_TOOLS.map((t: any) => t.name)
+  expect(names.sort()).toEqual([...PTC_ALLOWLIST].sort())
+  expect(names).not.toContain('sync_candles')
+  expect(names).not.toContain('call_api')
+})
+
+test('buildInterpreterMiddleware: { subagents: false } returns truthy without throwing', () => {
+  const mw = buildInterpreterMiddleware({ subagents: false })
+  expect(mw).toBeTruthy()
 })
