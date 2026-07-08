@@ -59,6 +59,7 @@ export async function saveSettings(payload: {
 }): Promise<boolean> {
 	saving.set(true);
 	settingsError.set(null);
+	testResult.set(null);
 	try {
 		const res = await fetch('/agent/settings', {
 			method: 'PUT',
@@ -84,6 +85,7 @@ export async function testConnection(payload: {
 }): Promise<void> {
 	testing.set(true);
 	testResult.set(null);
+	settingsError.set(null);
 	try {
 		const res = await fetch('/agent/test', {
 			method: 'POST',

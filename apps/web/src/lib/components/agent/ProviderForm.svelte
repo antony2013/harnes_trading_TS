@@ -1,7 +1,6 @@
 <script lang="ts">
 	import {
 		agentSettings,
-		agentSettings as settingsStore,
 		loadSettings,
 		fetchOllamaModels,
 		saveSettings,
@@ -9,6 +8,7 @@
 		saving,
 		testing,
 		testResult,
+		settingsError,
 		PROVIDER_LABELS,
 		DEFAULT_BASE_URL,
 		type Provider
@@ -25,7 +25,7 @@
 	// Seed from loaded settings once they arrive.
 	let seeded = false;
 	$effect(() => {
-		const s = $settingsStore;
+		const s = $agentSettings;
 		if (s && !seeded) {
 			seeded = true;
 			provider = s.provider;
@@ -101,6 +101,10 @@
 		<div class="result" data-ok={$testResult.ok}>
 			{$testResult.ok ? '✓' : '✗'} {$testResult.detail}
 		</div>
+	{/if}
+
+	{#if $settingsError}
+		<div class="result" data-ok="false">✗ {$settingsError}</div>
 	{/if}
 </div>
 

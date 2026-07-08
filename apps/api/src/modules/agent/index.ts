@@ -18,11 +18,16 @@ const PROVIDER_LITERAL = t.Union([
 
 async function listOllamaModels(baseUrl: string): Promise<string[]> {
   const url = baseUrl.replace(/\/$/, '') + '/api/tags'
-  const res = await fetch(url)
+  const res = await fetch(url, { signal: AbortSignal.timeout(10000) })
   if (!res.ok) throw new Error(`Ollama /api/tags responded ${res.status}`)
   const json: any = await res.json()
   const models = Array.isArray(json?.models) ? json.models : []
   return models.map((m: any) => m?.name).filter((n: any): n is string => typeof n === 'string')
+}
+
+/** Resolve the apiKey: a blank/omitted body key keeps the existing saved key (security invariant). */
+function resolveApiKey(body: { apiKey?: string }, existing: AgentSettings | null): string {
+  return body.apiKey && body.apiKey.trim() ? body.apiKey : existing?.apiKey ?? ''
 }
 
 /** Build an AgentConfig from a request body, keeping the existing saved key when the body omits/blank it. */
@@ -30,7 +35,7 @@ function cfgFromBody(
   body: { provider: Provider; baseUrl?: string; model: string; apiKey?: string },
 ): AgentConfig {
   const existing = readSettings()
-  const apiKey = body.apiKey && body.apiKey.trim() ? body.apiKey : existing?.apiKey ?? ''
+  const apiKey = resolveApiKey(body, existing)
   return {
     provider: body.provider,
     baseUrl: body.baseUrl ?? '',
@@ -52,8 +57,24 @@ async function testProvider(cfg: AgentConfig): Promise<{ ok: boolean; detail: st
     // hosted + custom: prove the key + endpoint work with a 1-chunk stream we abort immediately
     const model = buildModel(cfg)
     const stream = await (model as any).stream([{ role: 'user', content: 'ping' }])
-    for await (const _chunk of stream) break
-    return { ok: true, detail: 'Connected.' }
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const firstChunk = (async () => {
+      for await (const _chunk of stream) break
+      return { ok: true as const, detail: 'Connected.' }
+    })()
+    const timeout = new Promise<{ ok: boolean; detail: string }>((resolve) => {
+      timer = setTimeout(() => resolve({ ok: false, detail: 'Timed out (15s)' }), 15000)
+    })
+    try {
+      const result = await Promise.race([firstChunk, timeout])
+      if (!result.ok) {
+        // Timed out: best-effort abort the stream so it doesn't linger.
+        try { await (stream as any)?.return?.() } catch {}
+      }
+      return result
+    } finally {
+      if (timer) clearTimeout(timer)
+    }
   } catch (err: any) {
     return { ok: false, detail: err?.message ?? String(err) }
   }
@@ -75,7 +96,7 @@ export const agent = new Elysia({ name: 'agent' })
     '/agent/settings',
     ({ body }) => {
       const existing = readSettings()
-      const apiKey = body.apiKey && body.apiKey.trim() ? body.apiKey : existing?.apiKey ?? ''
+      const apiKey = resolveApiKey(body, existing)
       const next: AgentSettings = {
         provider: body.provider,
         baseUrl: body.baseUrl ?? '',
@@ -126,7 +147,6 @@ export const agent = new Elysia({ name: 'agent' })
   .post(
     '/agent/chat',
     async function* ({ body, set, request }) {
-      set.headers['Cache-Control'] = 'no-cache'
       set.headers['Connection'] = 'keep-alive'
 
       const s = readSettings()
