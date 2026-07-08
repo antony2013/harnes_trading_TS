@@ -1,9 +1,10 @@
-import { createDeepAgent } from 'deepagents'
+import { createDeepAgent, FilesystemBackend } from 'deepagents'
+import type { FilesystemPermission } from 'deepagents'
 import type { BaseLanguageModel } from '@langchain/core/language_models/base'
 import { ChatAnthropic } from '@langchain/anthropic'
 import { ChatOpenAI } from '@langchain/openai'
 import { ChatOllama } from '@langchain/ollama'
-import { readFileSync, existsSync } from 'node:fs'
+import { readFileSync, existsSync, mkdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { allTools } from './tools'
@@ -16,7 +17,8 @@ Use the provided tools to answer the user's question.
 - To store candles for a backtest, use sync_candles; to read stored candles, use read_candles.
 - If a tool returns an error object, read it and retry with corrected parameters.
 - If the API is unreachable, tell the user to start apps/api (bun run dev in apps/api).
-Be concise. Prefer tools over guessing.`
+Be concise. Prefer tools over guessing.
+You have a virtual filesystem (ls, read_file, write_file, edit_file, glob, grep) rooted at a workspace directory. Use it to persist analysis, notes, and intermediate results across the conversation. Prefer write_file for new artifacts and edit_file for small changes.`
 
 export type Provider = 'anthropic' | 'openai' | 'ollama' | 'custom'
 
@@ -28,6 +30,28 @@ export interface AgentConfig {
 }
 
 const OLLAMA_DEFAULT = 'http://localhost:11434'
+
+/** Default workspace root: apps/api/data/agent-workspace (mirrors settingsPath()). */
+function defaultWorkspacePath(): string {
+  const here = dirname(fileURLToPath(import.meta.url))
+  return join(here, '../../api/data/agent-workspace')
+}
+
+/** Resolve the agent workspace dir: AGENT_WORKSPACE_DIR env, else the default. */
+export function workspaceDir(): string {
+  return process.env.AGENT_WORKSPACE_DIR || defaultWorkspacePath()
+}
+
+/** Allow-all within the workspace. virtualMode already confines paths to rootDir;
+ *  this explicit rule documents intent and makes future deny rules a one-liner. */
+export const WORKSPACE_PERMISSIONS: FilesystemPermission[] = [
+  { operations: ['read', 'write'], paths: ['/**'], mode: 'allow' },
+]
+
+/** Build the sandboxed filesystem backend rooted at `root`. */
+export function buildBackend(root: string): FilesystemBackend {
+  return new FilesystemBackend({ rootDir: root, virtualMode: true })
+}
 
 export function buildModel(cfg: AgentConfig): BaseLanguageModel {
   switch (cfg.provider) {
@@ -47,7 +71,17 @@ export async function buildAgent(cfg: AgentConfig) {
     throw new Error('Agent config missing model')
   }
   const model = buildModel(cfg)
-  return createDeepAgent({ model, tools: allTools, systemPrompt: SYSTEM_PROMPT })
+
+  const root = workspaceDir()
+  mkdirSync(root, { recursive: true })
+
+  return createDeepAgent({
+    model,
+    tools: allTools,
+    systemPrompt: SYSTEM_PROMPT,
+    backend: buildBackend(root),
+    permissions: WORKSPACE_PERMISSIONS,
+  })
 }
 
 function defaultSettingsPath(): string {
