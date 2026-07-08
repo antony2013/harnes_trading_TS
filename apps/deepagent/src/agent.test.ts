@@ -2,7 +2,7 @@ import { test, expect, beforeEach } from 'bun:test'
 import { mkdtempSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { buildModel, resolveAgentConfig, workspaceDir, WORKSPACE_PERMISSIONS, buildBackend, buildAgent } from './agent'
+import { buildModel, resolveAgentConfig, workspaceDir, WORKSPACE_PERMISSIONS, buildBackend, buildAgent, PTC_ALLOWLIST } from './agent'
 
 beforeEach(() => {
   process.env.AGENT_SETTINGS_PATH = `/tmp/agent-settings-${Math.random().toString(36).slice(2)}.json`
@@ -77,4 +77,21 @@ test('buildBackend: rejects path traversal outside rootDir', async () => {
   const r: any = await b.read('../escape.txt')
   expect(r.error).toMatch(/Path traversal not allowed/)
   expect(r.content).toBeUndefined()
+})
+
+test('PTC_ALLOWLIST: 10 read-only data tools, excludes sync_candles + call_api', () => {
+  expect(PTC_ALLOWLIST).toEqual([
+    'search_instruments',
+    'get_ltp',
+    'get_ohlc_quote',
+    'historical_candles',
+    'intraday_candles',
+    'option_chain',
+    'market_status',
+    'read_candles',
+    'company_profile',
+    'news',
+  ])
+  expect(PTC_ALLOWLIST).not.toContain('sync_candles')
+  expect(PTC_ALLOWLIST).not.toContain('call_api')
 })

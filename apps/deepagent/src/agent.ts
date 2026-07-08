@@ -53,6 +53,22 @@ export function buildBackend(root: string): FilesystemBackend {
   return new FilesystemBackend({ rootDir: root, virtualMode: true })
 }
 
+/** PTC allowlist: read-only market-data tools exposed inside the eval interpreter.
+ *  Excludes sync_candles (server-side SQLite writes) and call_api (arbitrary endpoint
+ *  passthrough) — this list is the interpreter's permission boundary. */
+export const PTC_ALLOWLIST: string[] = [
+  'search_instruments',
+  'get_ltp',
+  'get_ohlc_quote',
+  'historical_candles',
+  'intraday_candles',
+  'option_chain',
+  'market_status',
+  'read_candles',
+  'company_profile',
+  'news',
+]
+
 export function buildModel(cfg: AgentConfig): BaseLanguageModel {
   switch (cfg.provider) {
     case 'anthropic':
