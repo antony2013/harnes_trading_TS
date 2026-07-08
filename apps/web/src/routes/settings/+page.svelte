@@ -20,10 +20,21 @@
 </div>
 
 <style>
-	.page { max-width: 560px; margin: 0 auto; padding: 2rem 1rem; }
-	h1 { font-size: 1.5rem; margin: 0 0 0.25rem; }
-	.muted { color: #8a97b5; margin: 0 0 1.5rem; }
+	.page { max-width: 580px; margin: 0 auto; padding: 2.5rem 1rem; }
+	h1 {
+		font-family: var(--font-display);
+		font-style: italic;
+		font-weight: 400;
+		font-size: var(--t-2xl);
+		line-height: 1.1;
+		margin: 0 0 0.4rem;
+		color: var(--paper);
+	}
+	.muted { color: var(--paper-dim); margin: 0 0 1.75rem; font-size: var(--t-sm); }
 	.card {
-		background: #0b1020; border: 1px solid #1e2740; border-radius: 12px; padding: 1.25rem;
+		background: var(--ink-900);
+		border: 1px solid var(--ink-line);
+		border-radius: var(--radius);
+		padding: 1.25rem;
 	}
 </style>

@@ -28,11 +28,10 @@
 
 <header class="hdr">
 	<a class="brand" href="/">
-		<span class="brand-mark">H</span>
-		<span class="brand-name">Harnesh<span class="dim">Trading</span></span>
+		<span class="brand-name">Harnesh<span class="dot">·</span><span class="dim">Trading</span></span>
 	</a>
 
-	<nav class="ticks">
+	<nav class="ticks" aria-label="Live index quotes">
 		{#each [$marketFeed.nifty, $marketFeed.sensex] as q (q.key)}
 			<div class="tick" data-up={q.change != null && q.change > 0} data-down={q.change != null && q.change < 0}>
 				<span class="tick-label">{q.label}</span>
@@ -62,12 +61,11 @@
 	.hdr {
 		display: flex;
 		align-items: center;
-		gap: 1.5rem;
-		padding: 0.5rem 1rem;
-		background: #0b1020;
-		color: #e7ecf5;
-		border-bottom: 1px solid #1e2740;
-		font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+		gap: 1.25rem;
+		padding: 0.55rem 1rem;
+		background: var(--ink-950);
+		color: var(--paper);
+		border-bottom: 1px solid var(--ink-line);
 		position: sticky;
 		top: 0;
 		z-index: 50;
@@ -75,32 +73,26 @@
 
 	.brand {
 		display: flex;
-		align-items: center;
-		gap: 0.55rem;
+		align-items: baseline;
 		text-decoration: none;
 		color: inherit;
 		flex: 0 0 auto;
 	}
-	.brand-mark {
-		display: grid;
-		place-items: center;
-		width: 28px;
-		height: 28px;
-		border-radius: 7px;
-		background: linear-gradient(135deg, #4f8cff, #7a5cff);
-		font-weight: 700;
-		font-size: 15px;
-		color: #fff;
-	}
 	.brand-name {
-		font-weight: 700;
+		font-family: var(--font-display);
+		font-size: var(--t-lg);
+		font-style: italic;
 		letter-spacing: 0.2px;
 		white-space: nowrap;
+		line-height: 1;
+	}
+	.brand-name .dot {
+		color: var(--saffron);
+		margin: 0 0.05rem;
+		font-style: normal;
 	}
 	.brand-name .dim {
-		color: #8a97b5;
-		font-weight: 500;
-		margin-left: 0.25rem;
+		color: var(--paper-dim);
 	}
 
 	.ticks {
@@ -110,48 +102,52 @@
 		flex: 1 1 auto;
 		justify-content: center;
 		overflow-x: auto;
+		scrollbar-width: none;
 	}
+	.ticks::-webkit-scrollbar { display: none; }
 	.tick {
 		display: flex;
 		align-items: baseline;
-		gap: 0.5rem;
+		gap: 0.45rem;
 		padding: 0.3rem 0.6rem;
-		border-radius: 8px;
-		background: #121a33;
-		border: 1px solid #1e2740;
+		border-radius: var(--radius-sm);
+		background: var(--ink-900);
+		border: 1px solid var(--ink-line);
 		white-space: nowrap;
+		font-family: var(--font-mono);
 	}
 	.tick-label {
-		font-size: 11px;
+		font-size: var(--t-2xs);
 		font-weight: 600;
-		letter-spacing: 0.6px;
-		color: #8a97b5;
+		letter-spacing: 0.8px;
+		color: var(--saffron);
 		text-transform: uppercase;
 	}
 	.tick-price {
-		font-size: 15px;
+		font-size: var(--t-md);
 		font-weight: 600;
 		font-variant-numeric: tabular-nums;
+		color: var(--paper);
 	}
 	.tick-change {
-		font-size: 12px;
+		font-size: var(--t-xs);
 		font-variant-numeric: tabular-nums;
 	}
 	.tick-change .pct {
 		color: inherit;
-		opacity: 0.75;
+		opacity: 0.7;
 		margin-left: 0.15rem;
 	}
 	.tick-change.up,
 	.tick[data-up='true'] .tick-price {
-		color: #22c55e;
+		color: var(--up);
 	}
 	.tick-change.down,
 	.tick[data-down='true'] .tick-price {
-		color: #ef4444;
+		color: var(--down);
 	}
 	.tick-change.flat {
-		color: #8a97b5;
+		color: var(--paper-mute);
 	}
 
 	.status {
@@ -159,43 +155,62 @@
 		align-items: center;
 		gap: 0.4rem;
 		flex: 0 0 auto;
-		font-size: 11px;
-		color: #8a97b5;
+		font-family: var(--font-mono);
+		font-size: var(--t-2xs);
+		color: var(--paper-dim);
 		text-transform: uppercase;
-		letter-spacing: 0.5px;
+		letter-spacing: 0.6px;
 	}
-	.dot {
-		width: 8px;
-		height: 8px;
+	.status .dot {
+		width: 7px;
+		height: 7px;
 		border-radius: 50%;
-		background: #8a97b5;
+		background: var(--paper-mute);
 	}
 	.status[data-status='live'] .dot {
-		background: #22c55e;
-		box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.6);
+		background: var(--up);
+		box-shadow: 0 0 0 0 rgba(91, 201, 122, 0.6);
 		animation: pulse 2s infinite;
 	}
-	.status[data-status='polling'] .dot { background: #eab308; }
-	.status[data-status='connecting'] .dot { background: #3b82f6; animation: pulse 1.2s infinite; }
-	.status[data-status='offline'] .dot { background: #ef4444; }
+	.status[data-status='polling'] .dot { background: var(--saffron); }
+	.status[data-status='connecting'] .dot { background: var(--saffron); animation: pulse 1.2s infinite; }
+	.status[data-status='offline'] .dot { background: var(--down); }
 
 	@keyframes pulse {
-		0% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.5); }
-		70% { box-shadow: 0 0 0 6px rgba(34, 197, 94, 0); }
-		100% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0); }
+		0% { box-shadow: 0 0 0 0 rgba(91, 201, 122, 0.5); }
+		70% { box-shadow: 0 0 0 5px rgba(91, 201, 122, 0); }
+		100% { box-shadow: 0 0 0 0 rgba(91, 201, 122, 0); }
 	}
 
-	.links { display: flex; gap: 0.4rem; flex: 0 0 auto; }
-	.navlink {
-		font-size: 12px; font-weight: 600; letter-spacing: 0.4px; text-transform: uppercase;
-		color: #8a97b5; text-decoration: none; padding: 0.3rem 0.5rem; border-radius: 6px;
+	.links {
+		display: flex;
+		gap: 0.35rem;
+		flex: 0 0 auto;
+		font-family: var(--font-mono);
 	}
-	.navlink:hover { color: #e7ecf5; background: #121a33; }
-	@media (max-width: 640px) {
+	.navlink {
+		font-size: var(--t-2xs);
+		font-weight: 500;
+		letter-spacing: 0.6px;
+		text-transform: uppercase;
+		color: var(--paper-dim);
+		text-decoration: none;
+		padding: 0.3rem 0.55rem;
+		border-radius: var(--radius-sm);
+		border: 1px solid transparent;
+	}
+	.navlink:hover {
+		color: var(--paper);
+		background: var(--ink-800);
+		border-color: var(--ink-line);
+	}
+
+	@media (max-width: 720px) {
 		.brand-name .dim { display: none; }
+		.brand-name .dot { display: none; }
 		.status-text { display: none; }
-		.hdr { gap: 0.75rem; padding: 0.4rem 0.6rem; }
-		.links { gap: 0.25rem; }
-		.navlink { padding: 0.25rem 0.35rem; }
+		.hdr { gap: 0.6rem; padding: 0.45rem 0.6rem; }
+		.links { gap: 0.2rem; }
+		.navlink { padding: 0.25rem 0.4rem; }
 	}
 </style>
