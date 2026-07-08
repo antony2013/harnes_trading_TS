@@ -20,7 +20,8 @@ Use the provided tools to answer the user's question.
 - If the API is unreachable, tell the user to start apps/api (bun run dev in apps/api).
 Be concise. Prefer tools over guessing.
 You have a virtual filesystem (ls, read_file, write_file, edit_file, glob, grep) rooted at a workspace directory. Use it to persist analysis, notes, and intermediate results across the conversation. Prefer write_file for new artifacts and edit_file for small changes.
-You have an \`eval\` tool that runs JavaScript in a sandboxed QuickJS interpreter (no filesystem, network, or shell access). The read-only market-data tools are available inside \`eval\` as \`tools.*\` (e.g. \`tools.get_ltp\`, \`tools.historical_candles\`, \`tools.search_instruments\`). Use \`eval\` for loops, parallel/batched fetches, and deterministic transforms (indicators, aggregation, filtering) instead of one tool call per turn. For multi-step data work, write a workflow in \`eval\`.`
+You have an \`eval\` tool that runs JavaScript in a sandboxed QuickJS interpreter (no filesystem, network, or shell access). The read-only market-data tools are available inside \`eval\` as \`tools.*\` (e.g. \`tools.get_ltp\`, \`tools.historical_candles\`, \`tools.search_instruments\`). Use \`eval\` for loops, parallel/batched fetches, and deterministic transforms (indicators, aggregation, filtering) instead of one tool call per turn. For multi-step data work, write a workflow in \`eval\`.
+You can delegate to specialist subagents with the \`task\` tool, or from inside \`eval\` via the \`task()\` global: \`task({ description, subagentType, responseSchema })\` runs a full agentic loop on a subagent and resolves to its result. Subagents: \`general-purpose\` (research/fetch market data), \`quant\` (fetch candles + compute indicators in its own eval), \`reporter\` (write reports/artifacts to the workspace filesystem). Use \`Promise.all\` in \`eval\` to fan out across instruments, then synthesize. Prefer \`task()\` orchestration for multi-step, multi-symbol analysis instead of doing it all yourself turn-by-turn.`
 
 export type Provider = 'anthropic' | 'openai' | 'ollama' | 'custom'
 
@@ -71,14 +72,36 @@ export const PTC_ALLOWLIST: string[] = [
   'news',
 ]
 
-/** Build the code-interpreter middleware: eval tool + PTC over the read-only data tools,
- *  with a 30s timeout to allow multi-tool network orchestration from a single eval. */
-export function buildInterpreterMiddleware() {
+/** Read-only market-data tools = allTools filtered to the PTC_ALLOWLIST names.
+ *  Reuses the Phase A boundary as the single source of truth (no name drift).
+ *  Excludes sync_candles + call_api — subagents never get the write/passthrough tools. */
+export const READ_ONLY_TOOLS = allTools.filter((t: any) => PTC_ALLOWLIST.includes(t.name))
+
+/** Build the code-interpreter middleware. opts.subagents === false disables the
+ *  dynamic task() global (used for the quant subagent to bound recursion); the
+ *  default (no arg) preserves the Phase A parent behavior (task() enabled). */
+export function buildInterpreterMiddleware(opts?: { subagents?: boolean }) {
   return createCodeInterpreterMiddleware({
     ptc: PTC_ALLOWLIST,
     executionTimeoutMs: 30_000,
+    ...(opts?.subagents === false ? { subagents: false } : {}),
   })
 }
+
+const QUANT_PROMPT = `You are a quant analyst for the Indian stock market. Fetch candles with the market-data tools and compute indicators / aggregations in eval (RSI, MACD, moving averages, returns, vol). Return concise numeric results. Do not write files.`
+
+const GENERAL_PURPOSE_PROMPT = `You are a general-purpose research subagent for the Indian stock market. Use the market-data tools to search instruments, fetch LTP/OHLC/quotes, option chain, market status, company profile, and news. Summarize what you find concisely. Do not write files.`
+
+const REPORTER_PROMPT = `You are a report writer. Given analysis results, write a clean markdown report to the workspace using write_file/edit_file. You have no market-data tools — work from what the caller provides.`
+
+/** Subagents the parent can delegate to via the task tool or the eval task() global.
+ *  general-purpose is defined here (named) to suppress the framework's auto
+ *  general-purpose, which would inherit sync_candles + call_api. */
+export const SUBAGENTS = [
+  { name: 'general-purpose', description: 'Research/fetch market data: instrument search, LTP, quotes, option chain, news, company profile.', systemPrompt: GENERAL_PURPOSE_PROMPT, tools: READ_ONLY_TOOLS },
+  { name: 'quant', description: 'Fetch candles and compute indicators/aggregations in eval (RSI, MACD, returns, vol).', systemPrompt: QUANT_PROMPT, tools: READ_ONLY_TOOLS, middleware: [buildInterpreterMiddleware({ subagents: false })] },
+  { name: 'reporter', description: 'Write a markdown report/artifact to the workspace from provided analysis.', systemPrompt: REPORTER_PROMPT, tools: [] },
+]
 
 export function buildModel(cfg: AgentConfig): BaseLanguageModel {
   switch (cfg.provider) {
@@ -109,6 +132,7 @@ export async function buildAgent(cfg: AgentConfig) {
     backend: buildBackend(root),
     permissions: WORKSPACE_PERMISSIONS,
     middleware: [buildInterpreterMiddleware()],
+    subagents: SUBAGENTS,
   })
 }
 
