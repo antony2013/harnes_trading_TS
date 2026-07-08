@@ -41,19 +41,31 @@
 <style>
 	.field {
 		width: 100%;
-		padding: 0.45rem 0.6rem;
-		background: #121a33;
-		border: 1px solid #1e2740;
-		border-radius: 8px;
-		color: #e7ecf5;
-		font-size: 14px;
+		padding: 0.5rem 0.65rem;
+		background: var(--ink-950);
+		border: 1px solid var(--ink-line);
+		border-radius: var(--radius-sm);
+		color: var(--paper);
+		font-family: var(--font-mono);
+		font-size: var(--t-sm);
+	}
+	.field:focus {
+		outline: none;
+		border-color: var(--saffron-line);
+		box-shadow: 0 0 0 3px var(--saffron-soft);
 	}
 	.link {
 		background: none;
 		border: none;
-		color: #4f8cff;
-		font-size: 12px;
+		color: var(--saffron);
+		font-family: var(--font-mono);
+		font-size: var(--t-2xs);
+		letter-spacing: 0.3px;
 		cursor: pointer;
 		padding: 0.25rem 0;
+	}
+	.link:hover {
+		text-decoration: underline;
+		text-underline-offset: 2px;
 	}
 </style>

@@ -11,6 +11,7 @@ export interface ChatMessage {
 	role: 'user' | 'assistant';
 	content: string;
 	tools?: ToolStep[];
+	ts: number; // epoch ms — ledger timestamp rail
 }
 
 export const messages = writable<ChatMessage[]>([]);
@@ -71,8 +72,8 @@ export async function sendMessage(text: string): Promise<void> {
 
 	messages.update((m) => [
 		...m,
-		{ id: userId, role: 'user', content: trimmed },
-		{ id: assistantId, role: 'assistant', content: '', tools: [] }
+		{ id: userId, role: 'user', content: trimmed, ts: Date.now() },
+		{ id: assistantId, role: 'assistant', content: '', tools: [], ts: Date.now() }
 	]);
 
 	streaming.set(true);
