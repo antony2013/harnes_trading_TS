@@ -12,6 +12,7 @@ import { buildAgent, buildModel, type AgentConfig } from '@harnesh-trading-ts/de
 const PROVIDER_LITERAL = t.Union([
   t.Literal('anthropic'),
   t.Literal('openai'),
+  t.Literal('openrouter'),
   t.Literal('ollama'),
   t.Literal('custom'),
 ])

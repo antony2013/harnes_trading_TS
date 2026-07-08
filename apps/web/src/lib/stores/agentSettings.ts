@@ -1,6 +1,6 @@
 import { writable } from 'svelte/store';
 
-export type Provider = 'anthropic' | 'openai' | 'ollama' | 'custom';
+export type Provider = 'anthropic' | 'openai' | 'openrouter' | 'ollama' | 'custom';
 
 export interface AgentSettingsView {
 	provider: Provider;
@@ -13,18 +13,27 @@ export interface AgentSettingsView {
 export const PROVIDER_LABELS: Record<Provider, string> = {
 	anthropic: 'Anthropic',
 	openai: 'OpenAI',
+	openrouter: 'OpenRouter',
 	ollama: 'Ollama (local)',
 	custom: 'OpenAI-compatible (custom)'
 };
 
 export const CURATED_MODELS: Partial<Record<Provider, string[]>> = {
 	anthropic: ['claude-sonnet-4-6', 'claude-haiku-4-5', 'claude-opus-4-1'],
-	openai: ['gpt-4o-mini', 'gpt-4o', 'gpt-4.1-mini']
+	openai: ['gpt-4o-mini', 'gpt-4o', 'gpt-4.1-mini'],
+	openrouter: [
+		'anthropic/claude-3.5-sonnet',
+		'meta-llama/llama-3.3-70b-instruct',
+		'google/gemini-2.5-pro',
+		'google/gemini-2.5-flash',
+		'deepseek/deepseek-chat'
+	]
 };
 
 export const DEFAULT_BASE_URL: Record<Provider, string> = {
 	anthropic: '',
 	openai: '',
+	openrouter: 'https://openrouter.ai/api/v1',
 	ollama: 'http://localhost:11434',
 	custom: ''
 };

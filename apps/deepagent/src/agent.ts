@@ -23,7 +23,7 @@ You have a virtual filesystem (ls, read_file, write_file, edit_file, glob, grep)
 You have an \`eval\` tool that runs JavaScript in a sandboxed QuickJS interpreter (no filesystem, network, or shell access). The read-only market-data tools are available inside \`eval\` as \`tools.*\` (e.g. \`tools.get_ltp\`, \`tools.historical_candles\`, \`tools.search_instruments\`). Use \`eval\` for loops, parallel/batched fetches, and deterministic transforms (indicators, aggregation, filtering) instead of one tool call per turn. For multi-step data work, write a workflow in \`eval\`.
 You can delegate to specialist subagents with the \`task\` tool, or from inside \`eval\` via the \`task()\` global: \`task({ description, subagentType, responseSchema })\` runs a full agentic loop on a subagent and resolves to its result. Subagents: \`general-purpose\` (research/fetch market data), \`quant\` (fetch candles + compute indicators in its own eval), \`reporter\` (write reports/artifacts to the workspace filesystem). Use \`Promise.all\` in \`eval\` to fan out across instruments, then synthesize. Prefer \`task()\` orchestration for multi-step, multi-symbol analysis instead of doing it all yourself turn-by-turn.`
 
-export type Provider = 'anthropic' | 'openai' | 'ollama' | 'custom'
+export type Provider = 'anthropic' | 'openai' | 'openrouter' | 'ollama' | 'custom'
 
 export interface AgentConfig {
   provider: Provider
@@ -109,6 +109,18 @@ export function buildModel(cfg: AgentConfig): BaseLanguageModel {
       return new ChatAnthropic({ model: cfg.model, apiKey: cfg.apiKey })
     case 'openai':
       return new ChatOpenAI({ model: cfg.model, apiKey: cfg.apiKey })
+    case 'openrouter':
+      return new ChatOpenAI({
+        model: cfg.model,
+        apiKey: cfg.apiKey,
+        configuration: {
+          baseURL: cfg.baseUrl || 'https://openrouter.ai/api/v1',
+          defaultHeaders: {
+            'HTTP-Referer': 'https://github.com/harnesh-trading-ts',
+            'X-Title': 'Harnesh Trading Agent'
+          }
+        }
+      })
     case 'ollama':
       return new ChatOllama({ model: cfg.model, baseUrl: cfg.baseUrl || OLLAMA_DEFAULT })
     case 'custom':
@@ -172,8 +184,16 @@ export function resolveAgentConfig(): AgentConfig | null {
     const model = envModel.slice(idx + 1)
     const apiKey =
       provider === 'anthropic' ? process.env.ANTHROPIC_API_KEY || '' :
-      provider === 'openai' ? process.env.OPENAI_API_KEY || '' : ''
-    return { provider, model, apiKey, baseUrl: provider === 'ollama' ? OLLAMA_DEFAULT : '' }
+      provider === 'openai' ? process.env.OPENAI_API_KEY || '' :
+      provider === 'openrouter' ? process.env.OPENROUTER_API_KEY || '' : ''
+    return {
+      provider,
+      model,
+      apiKey,
+      baseUrl:
+        provider === 'ollama' ? OLLAMA_DEFAULT :
+        provider === 'openrouter' ? 'https://openrouter.ai/api/v1' : ''
+    }
   }
   return null
 }

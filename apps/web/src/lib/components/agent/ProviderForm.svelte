@@ -15,7 +15,7 @@
 	} from '$lib/stores/agentSettings';
 	import ModelSelect from './ModelSelect.svelte';
 
-	const PROVIDERS: Provider[] = ['anthropic', 'openai', 'ollama', 'custom'];
+	const PROVIDERS: Provider[] = ['anthropic', 'openai', 'openrouter', 'ollama', 'custom'];
 
 	let provider = $state<Provider>('ollama');
 	let baseUrl = $state('http://localhost:11434');
@@ -73,7 +73,7 @@
 		</label>
 	{/if}
 
-	{#if provider === 'anthropic' || provider === 'openai' || provider === 'custom'}
+	{#if provider === 'anthropic' || provider === 'openai' || provider === 'openrouter' || provider === 'custom'}
 		<label class="row">
 			<span class="lbl">API Key</span>
 			<div class="inline">

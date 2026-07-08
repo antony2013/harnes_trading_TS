@@ -2,7 +2,7 @@ import { readFileSync, writeFileSync, mkdirSync, renameSync, existsSync } from '
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 
-export type Provider = 'anthropic' | 'openai' | 'ollama' | 'custom'
+export type Provider = 'anthropic' | 'openai' | 'openrouter' | 'ollama' | 'custom'
 
 export interface AgentSettings {
   provider: Provider

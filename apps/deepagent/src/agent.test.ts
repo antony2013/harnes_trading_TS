@@ -9,6 +9,7 @@ beforeEach(() => {
   delete process.env.DEEPAGENT_MODEL
   delete process.env.ANTHROPIC_API_KEY
   delete process.env.OPENAI_API_KEY
+  delete process.env.OPENROUTER_API_KEY
   delete process.env.AGENT_WORKSPACE_DIR
 })
 
@@ -22,6 +23,11 @@ test('buildModel: custom -> ChatOpenAI', () => {
   expect(m.constructor.name).toBe('ChatOpenAI')
 })
 
+test('buildModel: openrouter -> ChatOpenAI', () => {
+  const m = buildModel({ provider: 'openrouter', apiKey: 'k', baseUrl: 'https://openrouter.ai/api/v1', model: 'deepseek/deepseek-chat' })
+  expect(m.constructor.name).toBe('ChatOpenAI')
+})
+
 test('buildModel: anthropic -> ChatAnthropic', () => {
   const m = buildModel({ provider: 'anthropic', apiKey: 'k', baseUrl: '', model: 'claude' })
   expect(m.constructor.name).toBe('ChatAnthropic')
@@ -32,6 +38,13 @@ test('resolveAgentConfig: env fallback parses provider:model', () => {
   process.env.OPENAI_API_KEY = 'sk-test'
   const cfg = resolveAgentConfig()
   expect(cfg).toEqual({ provider: 'openai', model: 'gpt-4o-mini', apiKey: 'sk-test', baseUrl: '' })
+})
+
+test('resolveAgentConfig: env fallback parses provider:model for openrouter', () => {
+  process.env.DEEPAGENT_MODEL = 'openrouter:deepseek/deepseek-chat'
+  process.env.OPENROUTER_API_KEY = 'sk-or-test'
+  const cfg = resolveAgentConfig()
+  expect(cfg).toEqual({ provider: 'openrouter', model: 'deepseek/deepseek-chat', apiKey: 'sk-or-test', baseUrl: 'https://openrouter.ai/api/v1' })
 })
 
 test('resolveAgentConfig: null when no settings + no env', () => {
