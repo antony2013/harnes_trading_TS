@@ -17,7 +17,8 @@ Use the provided tools to answer the user's question.
 - To store candles for a backtest, use sync_candles; to read stored candles, use read_candles.
 - If a tool returns an error object, read it and retry with corrected parameters.
 - If the API is unreachable, tell the user to start apps/api (bun run dev in apps/api).
-Be concise. Prefer tools over guessing.`
+Be concise. Prefer tools over guessing.
+You have a virtual filesystem (ls, read_file, write_file, edit_file, glob, grep) rooted at a workspace directory. Use it to persist analysis, notes, and intermediate results across the conversation. Prefer write_file for new artifacts and edit_file for small changes.`
 
 export type Provider = 'anthropic' | 'openai' | 'ollama' | 'custom'
 
@@ -70,7 +71,17 @@ export async function buildAgent(cfg: AgentConfig) {
     throw new Error('Agent config missing model')
   }
   const model = buildModel(cfg)
-  return createDeepAgent({ model, tools: allTools, systemPrompt: SYSTEM_PROMPT })
+
+  const root = workspaceDir()
+  mkdirSync(root, { recursive: true })
+
+  return createDeepAgent({
+    model,
+    tools: allTools,
+    systemPrompt: SYSTEM_PROMPT,
+    backend: buildBackend(root),
+    permissions: WORKSPACE_PERMISSIONS,
+  })
 }
 
 function defaultSettingsPath(): string {

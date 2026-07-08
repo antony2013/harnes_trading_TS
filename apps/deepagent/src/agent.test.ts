@@ -1,8 +1,8 @@
 import { test, expect, beforeEach } from 'bun:test'
-import { mkdtempSync } from 'node:fs'
+import { mkdtempSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { buildModel, resolveAgentConfig, workspaceDir, WORKSPACE_PERMISSIONS, buildBackend } from './agent'
+import { buildModel, resolveAgentConfig, workspaceDir, WORKSPACE_PERMISSIONS, buildBackend, buildAgent } from './agent'
 
 beforeEach(() => {
   process.env.AGENT_SETTINGS_PATH = `/tmp/agent-settings-${Math.random().toString(36).slice(2)}.json`
@@ -59,4 +59,11 @@ test('buildBackend: write/read round-trips through rootDir', async () => {
   await b.write('notes.txt', 'hello')
   const r: any = await b.read('notes.txt')
   expect(r.content).toBe('hello')
+})
+
+test('buildAgent: creates workspace dir if missing', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'da-')) + '/missing'
+  process.env.AGENT_WORKSPACE_DIR = root
+  await buildAgent({ provider: 'ollama', apiKey: '', baseUrl: 'http://localhost:11434', model: 'llama3' })
+  expect(existsSync(root)).toBe(true)
 })
