@@ -23,6 +23,22 @@ test('buildOpenShellMiddleware: contributes a `shell` tool', async () => {
   expect(tools.map((t: any) => t.name)).toContain('shell')
 })
 
+test('shell tool schema: v1 exposes only `command` — no inert upload/download', async () => {
+  // upload/download were removed for v1 because the backend silently dropped
+  // them (deferred implementation). Lock the removal so they don't creep back
+  // without an implementation that actually forwards them to the backend.
+  const mw = makeMiddleware(new InMemoryExecutionBackend(() => ({ output: 'hi', exitCode: 0 })))
+  const shellTool = ((mw as any).tools as any[]).find((t) => t.name === 'shell')
+  const shape = shellTool.schema.shape ?? shellTool.schema?._def?.shape?.() ?? {}
+  const keys = Object.keys(shape)
+  expect(keys).toEqual(['command'])
+  expect(keys).not.toContain('upload')
+  expect(keys).not.toContain('download')
+  // The description must not advertise upload/download to the agent.
+  expect(shellTool.description.toLowerCase()).not.toContain('upload')
+  expect(shellTool.description.toLowerCase()).not.toContain('download')
+})
+
 test('shell tool: execs a command in the workspace + returns output + exit + persistence note', async () => {
   const backend = new InMemoryExecutionBackend(() => ({ output: 'hello', exitCode: 0 }))
   const mw = makeMiddleware(backend)

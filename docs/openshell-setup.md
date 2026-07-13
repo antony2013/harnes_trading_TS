@@ -16,8 +16,9 @@ The tool bridge binds 127.0.0.1:<bridgePort> lazily on the first `shell` call
 (per-process bearer token generated at agent build, baked into the sandbox env
 so the lazy bind and the sandbox share one token); sandboxes reach it via the
 host gateway (host.docker.internal). Sandboxes idle-reap after
-`openshell.idleTimeoutMs`. Author files inside the sandbox; export final
-artifacts to the host workspace via `shell`'s `download`.
+`openshell.idleTimeoutMs`. Author files inside the sandbox; use the agent's
+`write_file`/`read_file` tools for host-side final artifacts. (Host↔sandbox
+file upload/download via the `shell` tool is a future feature, not in v1.)
 
 v1 limitation: the bridge + workspace pool are process-singletons (first
 config wins). Production is single-profile, so this is fine; multi-profile

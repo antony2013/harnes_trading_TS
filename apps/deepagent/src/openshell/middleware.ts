@@ -37,13 +37,13 @@ export function buildOpenShellMiddleware(opts: OpenShellMiddlewareOpts): AgentMi
   const pool = getWorkspacePool(backend, { idleTimeoutMs: opts.idleTimeoutMs })
 
   const shellTool = tool(
-    async ({ command, upload, download }, config: any) => {
+    async ({ command }, config: any) => {
       const wid = config?.configurable?.workspace_id ?? config?.configurable?.thread_id ?? '__default__'
       try {
         // Lazily bind the bridge on first shell call (process singleton). Pre-supplied
         // token matches what the sandbox already has in its env. No-op after the first call.
         await getToolBridge({ port: opts.bridgePort, allowedTools: opts.ptcAllowlist, allTools: opts.allTools, token: bridgeToken })
-        const r = await pool.exec(wid, command, { upload, download, timeoutMs: opts.executionTimeoutMs })
+        const r = await pool.exec(wid, command, { timeoutMs: opts.executionTimeoutMs })
         return `${r.output}\n\n[exit: ${r.exitCode}] [persistent shell: cwd, env, installed packages, and /workspace files persist across your shell calls within this workspace]${r.parseWarning ? ' [warning: exit marker not found, output may be incomplete]' : ''}`
       } catch (err: any) {
         return `[error: ${String(err?.message ?? err)}]`
@@ -52,11 +52,9 @@ export function buildOpenShellMiddleware(opts: OpenShellMiddlewareOpts): AgentMi
     {
       name: 'shell',
       description:
-        'Run a shell command in the persistent sandbox for this workspace. The sandbox is a real Linux environment (bash, python, node, curl, git). State (cwd, env vars, installed packages, files in /workspace) persists across calls within this workspace. Use `upload` (host->sandbox) and `download` (sandbox->host) only as low-level file crossings; author files inside the sandbox by default and export final artifacts via download.',
+        'Run a shell command in the persistent sandbox for this workspace. The sandbox is a real Linux environment (bash, python, node, curl, git). State (cwd, env vars, installed packages, files in /workspace) persists across calls within this workspace. Author files inside the sandbox by default; use the agent\'s write_file/read_file tools for host-side final artifacts. (Host↔sandbox file crossings via the shell tool are a future feature, not currently supported — author in the sandbox and keep host artifacts via write_file/read_file.)',
       schema: z.object({
         command: z.string().describe('The shell command to run.'),
-        upload: z.array(z.string()).optional().describe('Host file paths to upload into /workspace before running.'),
-        download: z.array(z.string()).optional().describe('Sandbox paths to download to the host workspace after running (export).'),
       }),
     }
   )
