@@ -26,6 +26,16 @@ export async function captureRun(
       opts.abort?.() // runCase passes () => controller.abort() — cancels the v3 stream
     }
   }
+  const consumeSubagent = async (sub: any) => {
+    for await (const call of sub.toolCalls) {
+      if (capReached) break
+      push(sub.name, call.name, call.input)
+    }
+    for await (const nested of sub.subagents) {
+      if (capReached) break
+      await consumeSubagent(nested)
+    }
+  }
   try {
     await Promise.all([
       (async () => {
@@ -40,9 +50,14 @@ export async function captureRun(
           push('coordinator', call.name, call.input)
         }
       })(),
+      (async () => {
+        for await (const sub of run.subagents) {
+          if (capReached) break
+          await consumeSubagent(sub)
+        }
+      })(),
     ])
   } catch (err: any) {
-    // abort (maxTurns cap or timeout) = clean partial stop, no error; real throw = error.
     if (!opts.signal?.aborted) return { trajectory, finalAnswer, error: err?.message ?? String(err) }
   }
   return { trajectory, finalAnswer }

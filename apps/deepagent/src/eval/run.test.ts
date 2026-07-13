@@ -148,3 +148,24 @@ test('runSuite: restores env and cleans up after run (no leak)', async () => {
   })
   expect(process.env.API_BASE_URL).toBe(before)
 })
+
+test('captureRun captures subagent-internal tool calls, scope-tagged', async () => {
+  const stream = v3Stream({
+    toolCalls: [{ name: 'task', input: { subagent_type: 'quant' } }],
+    subagents: [
+      {
+        name: 'quant',
+        toolCalls: [
+          { name: 'historical_candles', input: { instrument_key: 'NSE_EQ|RELIANCE' } },
+          { name: 'read_candles', input: {} },
+        ],
+      },
+    ],
+  })
+  const cap = await captureRun(stream, { maxTurns: 8 })
+  expect(cap.trajectory.map((s) => s.name)).toEqual(['task', 'historical_candles', 'read_candles'])
+  expect(cap.trajectory[0].scope).toBe('coordinator')
+  expect(cap.trajectory[1].scope).toBe('quant')
+  expect(cap.trajectory[2].scope).toBe('quant')
+  expect(cap.error).toBeUndefined()
+})
