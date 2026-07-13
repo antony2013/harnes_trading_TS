@@ -61,3 +61,54 @@ test('WorkspacePool: does not reap a workspace with an in-flight exec', async ()
   resolve()
   await inflight
 })
+
+test('WorkspacePool: racing exec during reapIdle runs against a fresh workspace (reap-vs-new-exec race)', async () => {
+  // Backend models destruction by instance: destroyWorkspace captures the current instance,
+  // removes it from the map immediately, then (after a tick) marks only THAT instance destroyed.
+  // A subsequent getOrCreateWorkspace creates a fresh instance, unaffected by the in-flight destroy.
+  // With the OLD reapIdle ordering (await destroy, then delete entry), a racing exec found the
+  // still-present entry, skipped getOrCreateWorkspace, and ran backend.exec against an id whose
+  // workspace had already been removed from the backend map -> "unknown workspace" throw.
+  // With the fix (delete entry BEFORE await destroy), the racing exec sees no entry, lazily
+  // creates a fresh one + calls getOrCreateWorkspace, and succeeds.
+  const workspaces = new Map<string, { token: string }>()
+  const destroyed = new Set<string>()
+  let counter = 0
+  const racingBackend: import('./backend').ExecutionBackend = {
+    async getOrCreateWorkspace(id) {
+      let ws = workspaces.get(id)
+      if (!ws || destroyed.has(ws.token)) {
+        ws = { token: `ws${++counter}` }
+        workspaces.set(id, ws)
+      }
+      return { id, phase: 'ready' }
+    },
+    async exec(id, command) {
+      const ws = workspaces.get(id)
+      if (!ws || destroyed.has(ws.token)) throw new Error(`unknown workspace: ${id}`)
+      return { output: `out:${command}`, exitCode: 0 }
+    },
+    async destroyWorkspace(id) {
+      const ws = workspaces.get(id)
+      if (!ws) return
+      workspaces.delete(id) // remove this instance up-front
+      await new Promise((r) => setTimeout(r, 10))
+      destroyed.add(ws.token) // mark only THIS instance destroyed
+    },
+    async listWorkspaces() { return [] },
+  }
+  const pool = new WorkspacePool(racingBackend, { idleTimeoutMs: -1 }) // negative -> always reap, no reap timer -> no leak
+  await pool.exec('w1', 'a') // create the workspace
+
+  // Trigger reapIdle but do NOT await it: its sync prefix deletes the entry (fix) and starts the
+  // 10ms destroy await. While destroy is in-flight, fire a concurrent exec on the same id.
+  const reaping = pool.reapIdle()
+  const result = await pool.exec('w1', 'b') // must run against a fresh workspace, not throw
+  expect(result.output).toBe('out:b')
+  expect(result.exitCode).toBe(0)
+
+  await reaping // let the in-flight destroy finish; must not affect the fresh workspace
+  // The fresh exec's workspace is still usable afterwards:
+  const again = await pool.exec('w1', 'c')
+  expect(again.output).toBe('out:c')
+})

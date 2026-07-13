@@ -48,8 +48,12 @@ export class WorkspacePool {
     const now = Date.now()
     for (const [id, e] of [...this.entries.entries()]) {
       if (e.inFlight === 0 && now - e.lastUsed > this.opts.idleTimeoutMs) {
-        await this.backend.destroyWorkspace(id).catch(() => {})
+        // Delete BEFORE awaiting destroy: a racing exec() on the same id then sees no entry,
+        // lazily creates a fresh one + calls getOrCreateWorkspace, and never runs against the
+        // workspace being destroyed. (Awaiting destroy first left a window where exec chained
+        // onto the dying entry's already-resolved chain and ran against a destroyed workspace.)
         this.entries.delete(id)
+        await this.backend.destroyWorkspace(id).catch(() => {})
       }
     }
   }
