@@ -25,9 +25,9 @@ export const orchestrationCases: EvalCase[] = [
             'company_profile', 'news', 'sync_candles', 'sync_expired_candles',
             'call_api',
           ])
-          const direct = t.filter((s) => marketTools.has(s.name)).length
+          const direct = t.filter((s) => marketTools.has(s.name) && s.scope === 'coordinator').length
           return direct >= 5
-            ? { passed: false, detail: `${direct} direct market-data calls — should delegate/batch via task/eval` }
+            ? { passed: false, detail: `${direct} direct coordinator market-data calls — should delegate/batch via task/eval` }
             : { passed: true }
         },
       },
