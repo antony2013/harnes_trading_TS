@@ -23,6 +23,7 @@ export const orchestrationCases: EvalCase[] = [
             'search_instruments', 'get_ltp', 'get_ohlc_quote', 'historical_candles',
             'intraday_candles', 'option_chain', 'market_status', 'read_candles',
             'company_profile', 'news', 'sync_candles', 'sync_expired_candles',
+            'call_api',
           ])
           const direct = t.filter((s) => marketTools.has(s.name)).length
           return direct >= 5

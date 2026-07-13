@@ -1,9 +1,15 @@
 // Shared HTTP helper for all deepagent tools: calls the running trading API
 // (apps/api on port 3000 by default) and returns the response body as a string.
 // Tools never throw — they return a JSON error string so the agent can reason.
+//
+// The base URL is read from API_BASE_URL per call (not cached at module load) so
+// env mutations after import — e.g. the eval harness pointing tools at a stub
+// server — are honored. In production API_BASE_URL is set once (or unset → the
+// default), so call-time read is equivalent to the old module-load const.
 
-const API_BASE_URL =
-  (process.env.API_BASE_URL ?? 'http://localhost:3000').replace(/\/+$/, '')
+function apiBaseUrl(): string {
+  return (process.env.API_BASE_URL ?? 'http://localhost:3000').replace(/\/+$/, '')
+}
 
 export type ApiMethod = 'GET' | 'POST'
 
@@ -27,7 +33,7 @@ export async function apiCall(
   query?: Record<string, string | number | undefined>,
   body?: unknown,
 ): Promise<string> {
-  const url = new URL(API_BASE_URL + path)
+  const url = new URL(apiBaseUrl() + path)
   if (query) {
     for (const [k, v] of Object.entries(query)) {
       if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, String(v))
@@ -44,7 +50,7 @@ export async function apiCall(
     return JSON.stringify({ status: res.status, error: tryParse(text) ?? text })
   } catch (err: any) {
     return JSON.stringify({
-      error: `API not reachable at ${API_BASE_URL} — is apps/api running? (${err?.message ?? String(err)})`,
+      error: `API not reachable at ${apiBaseUrl()} — is apps/api running? (${err?.message ?? String(err)})`,
     })
   }
 }

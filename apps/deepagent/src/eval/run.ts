@@ -58,15 +58,17 @@ export interface RunSuiteOptions {
 
 async function runCase(c: EvalCase, cfg: AgentConfig, build: (cfg: AgentConfig) => Promise<any>): Promise<EvalResult> {
   const started = Date.now()
-  const server = await startStubServer(c.stubRoutes)
-  const ws = createSeededWorkspace(c.workspaceSeed)
   const prevApi = process.env.API_BASE_URL
   const prevWs = process.env.AGENT_WORKSPACE_DIR
-  process.env.API_BASE_URL = server.url
-  process.env.AGENT_WORKSPACE_DIR = ws.dir
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), c.timeoutMs ?? 60_000)
+  let server: { url: string; stop: () => Promise<void> } | undefined
+  let ws: { dir: string; cleanup: () => void } | undefined
   try {
+    server = await startStubServer(c.stubRoutes)
+    ws = createSeededWorkspace(c.workspaceSeed)
+    process.env.API_BASE_URL = server.url
+    process.env.AGENT_WORKSPACE_DIR = ws.dir
     const agent = await build(cfg)
     const stream = agent.streamEvents(
       { messages: [{ role: 'user', content: c.prompt }] },
@@ -96,8 +98,8 @@ async function runCase(c: EvalCase, cfg: AgentConfig, build: (cfg: AgentConfig) 
     }
   } finally {
     clearTimeout(timer)
-    await server.stop()
-    ws.cleanup()
+    await server?.stop()
+    ws?.cleanup()
     process.env.API_BASE_URL = prevApi
     process.env.AGENT_WORKSPACE_DIR = prevWs
   }
