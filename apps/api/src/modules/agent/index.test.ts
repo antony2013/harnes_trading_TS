@@ -60,3 +60,21 @@ test('POST /agent/chat defaults workspace_id to __default__ when body omits work
   await res.text()
   expect(recordedConfigurable).toEqual({ workspace_id: '__default__' })
 })
+
+test('POST /agent/chat rejects a path-traversing workspaceId with 422 (schema guard)', async () => {
+  const res = await agent.handle(
+    new Request('http://localhost/agent/chat', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        workspaceId: '../../etc/x',
+        messages: [{ role: 'user', content: 'hi' }],
+      }),
+    }),
+  )
+  // Elysia validates the body against the RegExp BEFORE the handler runs; a
+  // non-matching workspaceId yields 422 (not 200, and never reaches mkdirSync).
+  expect(res.status).toBe(422)
+  await res.text()
+  expect(recordedConfigurable).toBeUndefined()
+})

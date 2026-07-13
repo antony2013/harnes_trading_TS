@@ -201,7 +201,11 @@ export const agent = new Elysia({ name: 'agent' })
     },
     {
       body: t.Object({
-        workspaceId: t.Optional(t.String()),
+        // Reject path-traversing / absurd-length workspaceId at the schema layer.
+        // `__default__` fallback (letters + underscores, length 10) matches; the
+        // route handler still coerces absent -> '__default__'. Elysia returns 422
+        // before the handler for non-matching values (e.g. "../../etc/x").
+        workspaceId: t.Optional(t.RegExp(/^[A-Za-z0-9_-]{1,64}$/)),
         messages: t.Array(
           t.Object({
             role: t.Union([t.Literal('user'), t.Literal('assistant'), t.Literal('system')]),
