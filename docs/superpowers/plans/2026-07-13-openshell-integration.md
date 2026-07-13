@@ -334,7 +334,7 @@ test('OpenShellCliBackend: getOrCreateWorkspace runs `sandbox create --name <id>
 test('OpenShellCliBackend: exec wraps command with exit marker + parses', async () => {
   const b = new OpenShellCliBackend({ binary: ['bash', bin], image: 'img:1' })
   await b.getOrCreateWorkspace('w1')
-  const r = await b.exec('w1', 'echo hello')
+  const r = await b.exec('w1', "printf 'hello'")
   expect(r.output).toBe('hello')
   expect(r.exitCode).toBe(0)
 })
