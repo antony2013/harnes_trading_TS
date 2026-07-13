@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://harnesh-trading-ts/profiles/profile.v1.json",
+  "title": "Deep Agent Harness Profile",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "profileVersion": { "type": "integer", "const": 1 },
+    "systemPromptSuffix": { "type": "string" },
+    "ptcAllowlist": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+    "interpreter": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "executionTimeoutMs": { "type": "integer", "minimum": 1 },
+        "subagents": { "type": "boolean" }
+      }
+    },
+    "middleware": { "type": "array", "items": { "type": "string" } },
+    "subagents": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name"],
+        "properties": {
+          "name": { "type": "string" },
+          "description": { "type": "string" },
+          "systemPrompt": { "type": "string" },
+          "tools": {
+            "oneOf": [
+              { "type": "string", "enum": ["readOnly", "all", "none"] },
+              { "type": "array", "items": { "type": "string" }, "uniqueItems": true }
+            ]
+          },
+          "middleware": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    "flags": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "injectTodayDate": { "type": "boolean" }
+      }
+    }
+  }
+}
