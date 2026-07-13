@@ -26,3 +26,7 @@ apps/api/drizzle/
 # OS / editor
 .DS_Store
 Thumbs.db
+
+# Scratch / build artifacts (tooling, never committed)
+.tmp/
+.playwright-mcp/
