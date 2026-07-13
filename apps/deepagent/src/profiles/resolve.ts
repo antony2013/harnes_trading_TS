@@ -21,14 +21,16 @@ export function resolveTools(spec: ToolSetSpec, ptcAllowlist: string[]): unknown
  *  built middleware). The interpreter builder forces subagents:false for any
  *  subagent (parent:false) — bounds recursion to depth 1. */
 export function resolveProfile(data: ProfileData): ResolvedProfile {
-  const parentCtx: MwCtx = { ptcAllowlist: data.ptcAllowlist, interpreter: data.interpreter, parent: true }
+  const openshell = data.middleware.includes('openshell') ? data.openshell : undefined
+  const parentCtx: MwCtx = { ptcAllowlist: data.ptcAllowlist, interpreter: data.interpreter, parent: true, openshell, allTools }
   const parentMiddleware = data.middleware.map((name) => {
     const builder = MIDDLEWARE_REGISTRY[name]
     if (!builder) throw new Error(`unknown middleware: "${name}"`)
     return builder(parentCtx)
   })
   const subagents: ResolvedSubagent[] = data.subagents.map((s) => {
-    const subCtx: MwCtx = { ptcAllowlist: data.ptcAllowlist, interpreter: data.interpreter, parent: false }
+    const subOpenshell = s.middleware.includes('openshell') ? data.openshell : undefined
+    const subCtx: MwCtx = { ptcAllowlist: data.ptcAllowlist, interpreter: data.interpreter, parent: false, openshell: subOpenshell, allTools }
     const middleware = s.middleware.map((name) => {
       const builder = MIDDLEWARE_REGISTRY[name]
       if (!builder) throw new Error(`unknown middleware: "${name}"`)

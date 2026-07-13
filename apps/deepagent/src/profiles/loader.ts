@@ -8,6 +8,7 @@ import type { ProfileData, SubagentSpec } from './types'
 import { DEFAULT_PROFILE_DATA } from './defaults'
 import { MIDDLEWARE_REGISTRY } from './middleware'
 import { allTools } from '../tools'
+export { resolveProfile } from './resolve'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const schema = JSON.parse(readFileSync(join(here, 'schema.json'), 'utf8'))
@@ -76,6 +77,13 @@ function validateMerged(data: ProfileData): ProfileData {
   if (!d.interpreter?.executionTimeoutMs || typeof d.interpreter.subagents !== 'boolean')
     throw new Error('profile missing interpreter.executionTimeoutMs/subagents')
   if (!Array.isArray(d.middleware)) throw new Error('profile missing middleware')
+  if (d.middleware.includes('openshell')) {
+    const o = (d as any).openshell
+    if (!o || typeof o.image !== 'string' || typeof o.idleTimeoutMs !== 'number' ||
+        typeof o.bridgePort !== 'number' || typeof o.executionTimeoutMs !== 'number') {
+      throw new Error('profile missing complete openshell spec (image/idleTimeoutMs/bridgePort/executionTimeoutMs)')
+    }
+  }
   if (!Array.isArray(d.subagents) || d.subagents.length === 0) throw new Error('profile missing subagents')
   for (const s of d.subagents) {
     for (const f of ['description', 'systemPrompt', 'tools', 'middleware'] as const) {
