@@ -13,36 +13,52 @@ export interface RunCapture {
 }
 
 export async function captureRun(
-  stream: AsyncIterable<any>,
-  opts: { maxTurns: number; signal?: AbortSignal },
+  run: any, // DeepAgentRunStream from agent.streamEvents({ messages }, { version: 'v3', signal })
+  opts: { maxTurns: number; signal?: AbortSignal; abort?: () => void },
 ): Promise<RunCapture> {
   const trajectory: TrajectoryStep[] = []
   let finalAnswer = ''
-  try {
-    for await (const ev of stream) {
-      if (opts.signal?.aborted) break
-      if (ev.event === 'on_tool_start') {
-        trajectory.push({
-          name: ev.name,
-          args: ev.data?.input ?? {},
-          tool_call_id: ev.data?.tool_call_id ?? String(trajectory.length),
-        })
-        if (trajectory.length >= opts.maxTurns) {
-          try {
-            await (stream as any)?.return?.()
-          } catch {
-            /* ignore */
-          }
-          break
-        }
-      } else if (ev.event === 'on_chat_model_stream') {
-        const chunk = ev.data?.chunk
-        const text = typeof chunk?.content === 'string' ? chunk.content : ''
-        if (text) finalAnswer += text
-      }
+  let capReached = false
+  const push = (scope: string, name: string, input: any) => {
+    trajectory.push({ name, args: input ?? {}, tool_call_id: String(trajectory.length), scope })
+    if (trajectory.length >= opts.maxTurns && !capReached) {
+      capReached = true
+      opts.abort?.() // runCase passes () => controller.abort() — cancels the v3 stream
     }
+  }
+  const consumeSubagent = async (sub: any) => {
+    for await (const call of sub.toolCalls) {
+      if (capReached) break
+      push(sub.name, call.name, call.input)
+    }
+    for await (const nested of sub.subagents) {
+      if (capReached) break
+      await consumeSubagent(nested)
+    }
+  }
+  try {
+    await Promise.all([
+      (async () => {
+        for await (const msg of run.messages) {
+          if (capReached) break
+          for await (const token of msg.text) finalAnswer += token
+        }
+      })(),
+      (async () => {
+        for await (const call of run.toolCalls) {
+          if (capReached) break
+          push('coordinator', call.name, call.input)
+        }
+      })(),
+      (async () => {
+        for await (const sub of run.subagents) {
+          if (capReached) break
+          await consumeSubagent(sub)
+        }
+      })(),
+    ])
   } catch (err: any) {
-    return { trajectory, finalAnswer, error: err?.message ?? String(err) }
+    if (!opts.signal?.aborted) return { trajectory, finalAnswer, error: err?.message ?? String(err) }
   }
   return { trajectory, finalAnswer }
 }
@@ -70,11 +86,15 @@ async function runCase(c: EvalCase, cfg: AgentConfig, build: (cfg: AgentConfig) 
     process.env.API_BASE_URL = server.url
     process.env.AGENT_WORKSPACE_DIR = ws.dir
     const agent = await build(cfg)
-    const stream = agent.streamEvents(
+    const stream = await agent.streamEvents(
       { messages: [{ role: 'user', content: c.prompt }] },
-      { version: 'v2', signal: controller.signal },
+      { version: 'v3', signal: controller.signal },
     )
-    const cap = await captureRun(stream, { maxTurns: c.maxTurns ?? 8, signal: controller.signal })
+    const cap = await captureRun(stream, {
+      maxTurns: c.maxTurns ?? 8,
+      signal: controller.signal,
+      abort: () => controller.abort(),
+    })
     const assertionResults = gradeCase(c.assertions, cap.trajectory)
     return {
       caseId: c.id,

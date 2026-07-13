@@ -18,6 +18,7 @@ export interface TrajectoryStep {
   name: string
   args: Record<string, any>
   tool_call_id: string
+  scope?: string   // 'coordinator' (default) or the subagent name; absent == 'coordinator'
 }
 
 export type Assertion =

@@ -2,35 +2,78 @@
 import { test, expect } from 'bun:test'
 import { captureRun } from './run'
 
-async function* mockStream(events: any[]) {
-  for (const e of events) yield e
+/** Build an async iterable over a plain array. */
+function asyncIter<T>(items: T[]): AsyncIterable<T> {
+  return (async function* () {
+    for (const x of items) yield x
+  })()
+}
+
+/**
+ * Build a v3-shaped DeepAgentRunStream fake for unit tests (no real model).
+ * - messages: each string becomes one message whose `.text` yields it as a single token.
+ * - toolCalls: each {name,input} becomes a coordinator tool call.
+ * - subagents: each {name,toolCalls} becomes a subagent handle (used by Task 2).
+ */
+function v3Stream(spec: {
+  messages?: string[]
+  toolCalls?: Array<{ name: string; input?: any }>
+  subagents?: Array<{ name: string; toolCalls?: Array<{ name: string; input?: any }> }>
+}): any {
+  return {
+    messages: asyncIter((spec.messages ?? []).map((text) => ({ text: asyncIter([text]) }))),
+    toolCalls: asyncIter(
+      (spec.toolCalls ?? []).map((c) => ({
+        name: c.name,
+        input: c.input ?? {},
+        status: Promise.resolve('finished' as const),
+        output: Promise.resolve('ok'),
+      })),
+    ),
+    subagents: asyncIter(
+      (spec.subagents ?? []).map((s) => ({
+        name: s.name,
+        toolCalls: asyncIter((s.toolCalls ?? []).map((c) => ({ name: c.name, input: c.input ?? {} }))),
+        messages: asyncIter([]),
+        subagents: asyncIter([]),
+      })),
+    ),
+  }
 }
 
 test('captureRun collects tool starts and final answer', async () => {
-  const events = [
-    { event: 'on_chat_model_stream', data: { chunk: { content: 'Hi ' } } },
-    { event: 'on_tool_start', name: 'search_instruments', data: { input: { q: 'TCS' } } },
-    { event: 'on_chat_model_stream', data: { chunk: { content: 'there' } } },
-  ]
-  const cap = await captureRun(mockStream(events), { maxTurns: 8 })
+  const stream = v3Stream({
+    messages: ['Hi ', 'there'],
+    toolCalls: [{ name: 'search_instruments', input: { q: 'TCS' } }],
+  })
+  const cap = await captureRun(stream, { maxTurns: 8 })
   expect(cap.trajectory).toHaveLength(1)
-  expect(cap.trajectory[0]).toMatchObject({ name: 'search_instruments', args: { q: 'TCS' } })
+  expect(cap.trajectory[0]).toMatchObject({ name: 'search_instruments', args: { q: 'TCS' }, scope: 'coordinator' })
   expect(cap.finalAnswer).toBe('Hi there')
   expect(cap.error).toBeUndefined()
 })
 
 test('captureRun stops at maxTurns', async () => {
-  const events = Array.from({ length: 20 }, () => ({ event: 'on_tool_start', name: 'get_ltp', data: { input: {} } }))
-  const cap = await captureRun(mockStream(events), { maxTurns: 3 })
+  const ac = new AbortController()
+  const stream = v3Stream({
+    toolCalls: Array.from({ length: 20 }, () => ({ name: 'get_ltp', input: {} })),
+  })
+  const cap = await captureRun(stream, { maxTurns: 3, signal: ac.signal, abort: () => ac.abort() })
   expect(cap.trajectory).toHaveLength(3)
+  expect(cap.trajectory.every((s) => s.scope === 'coordinator')).toBe(true)
+  expect(cap.error).toBeUndefined()
 })
 
 test('captureRun swallows stream errors into error field', async () => {
-  async function* boom() {
-    yield { event: 'on_tool_start', name: 'x', data: { input: {} } }
-    throw new Error('stream blew up')
+  const stream = {
+    messages: asyncIter([]),
+    toolCalls: (async function* () {
+      yield { name: 'x', input: {} }
+      throw new Error('stream blew up')
+    })(),
+    subagents: asyncIter([]),
   }
-  const cap = await captureRun(boom(), { maxTurns: 8 })
+  const cap = await captureRun(stream, { maxTurns: 8 })
   expect(cap.trajectory).toHaveLength(1)
   expect(cap.error).toBe('stream blew up')
 })
@@ -39,19 +82,13 @@ test('captureRun swallows stream errors into error field', async () => {
 import { runSuite } from './run'
 import type { EvalCase } from './types'
 
-function fakeAgent(events: any[]) {
+function fakeAgent(spec: Parameters<typeof v3Stream>[0]) {
   return {
-    streamEvents: async function* () {
-      for (const e of events) yield e
-    },
+    streamEvents: async () => v3Stream(spec),
   }
 }
 
 test('runSuite: grades a passing case via injected fake agent', async () => {
-  const events = [
-    { event: 'on_tool_start', name: 'search_instruments', data: { input: { q: 'TCS' } } },
-    { event: 'on_chat_model_stream', data: { chunk: { content: 'done' } } },
-  ]
   const oneCase: EvalCase = {
     id: 't1',
     category: 'ir',
@@ -62,7 +99,10 @@ test('runSuite: grades a passing case via injected fake agent', async () => {
   const results = await runSuite({
     cfg: { provider: 'ollama', apiKey: '', baseUrl: '', model: 'x' },
     cases: [oneCase],
-    buildAgentFn: async () => fakeAgent(events),
+    buildAgentFn: async () => fakeAgent({
+      messages: ['done'],
+      toolCalls: [{ name: 'search_instruments', input: { q: 'TCS' } }],
+    }),
   })
   expect(results).toHaveLength(1)
   expect(results[0].passed).toBe(true)
@@ -71,7 +111,6 @@ test('runSuite: grades a passing case via injected fake agent', async () => {
 })
 
 test('runSuite: a failing assertion makes the case fail', async () => {
-  const events = [{ event: 'on_tool_start', name: 'get_ltp', data: { input: {} } }]
   const oneCase: EvalCase = {
     id: 't2',
     category: 'ir',
@@ -82,7 +121,7 @@ test('runSuite: a failing assertion makes the case fail', async () => {
   const results = await runSuite({
     cfg: { provider: 'ollama', apiKey: '', baseUrl: '', model: 'x' },
     cases: [oneCase],
-    buildAgentFn: async () => fakeAgent(events),
+    buildAgentFn: async () => fakeAgent({ toolCalls: [{ name: 'get_ltp', input: {} }] }),
   })
   expect(results[0].passed).toBe(false)
   expect(results[0].assertionResults[0].passed).toBe(false)
@@ -95,7 +134,7 @@ test('runSuite: categories filter applies', async () => {
     cfg: { provider: 'ollama', apiKey: '', baseUrl: '', model: 'x' },
     cases: [a, b],
     categories: ['c1'],
-    buildAgentFn: async () => fakeAgent([]),
+    buildAgentFn: async () => fakeAgent({}),
   })
   expect(results.map((r) => r.caseId)).toEqual(['a'])
 })
@@ -105,7 +144,68 @@ test('runSuite: restores env and cleans up after run (no leak)', async () => {
   await runSuite({
     cfg: { provider: 'ollama', apiKey: '', baseUrl: '', model: 'x' },
     cases: [{ id: 'leak', category: 'x', prompt: 'p', stubRoutes: [], assertions: [] }],
-    buildAgentFn: async () => fakeAgent([]),
+    buildAgentFn: async () => fakeAgent({}),
   })
   expect(process.env.API_BASE_URL).toBe(before)
+})
+
+test('captureRun captures subagent-internal tool calls, scope-tagged', async () => {
+  const stream = v3Stream({
+    toolCalls: [{ name: 'task', input: { subagent_type: 'quant' } }],
+    subagents: [
+      {
+        name: 'quant',
+        toolCalls: [
+          { name: 'historical_candles', input: { instrument_key: 'NSE_EQ|RELIANCE' } },
+          { name: 'read_candles', input: {} },
+        ],
+      },
+    ],
+  })
+  const cap = await captureRun(stream, { maxTurns: 8 })
+  expect(cap.trajectory.map((s) => s.name)).toEqual(['task', 'historical_candles', 'read_candles'])
+  expect(cap.trajectory[0].scope).toBe('coordinator')
+  expect(cap.trajectory[1].scope).toBe('quant')
+  expect(cap.trajectory[2].scope).toBe('quant')
+  expect(cap.error).toBeUndefined()
+})
+
+/**
+ * Build an async iterable of tool calls that throws once the provided signal
+ * aborts — mirroring how a real deepagents@1.10.5 v3 iterable rejects with an
+ * AbortError when its AbortSignal is aborted. Yields tool calls one at a time
+ * with a zero-delay setTimeout between yields so the maxTurns cap can fire
+ * mid-stream and the abort is observed on the next yield.
+ */
+function abortableToolCalls(
+  count: number,
+  signal: AbortSignal,
+): AsyncIterable<{ name: string; input: any }> {
+  return (async function* () {
+    for (let i = 0; i < count; i++) {
+      if (signal.aborted) {
+        // Match the v3 iterable's AbortError rejection; the catch only checks
+        // signal.aborted, so the specific exception type is irrelevant here.
+        throw new DOMException('aborted', 'AbortError')
+      }
+      yield { name: 'get_ltp', input: { i } }
+      await new Promise((r) => setTimeout(r, 0))
+    }
+  })()
+}
+
+test('captureRun returns clean partial stop on maxTurns cap (no error)', async () => {
+  const ac = new AbortController()
+  const stream = {
+    messages: asyncIter([]),
+    toolCalls: abortableToolCalls(20, ac.signal),
+    subagents: asyncIter([]),
+  }
+  const cap = await captureRun(stream, { maxTurns: 2, signal: ac.signal, abort: () => ac.abort() })
+  // The cap fires at trajectory.length === 2 → abort() → the iterable throws on
+  // the next yield → Promise.all rejects → catch sees signal.aborted === true
+  // and returns a partial result WITHOUT setting error.
+  expect(cap.trajectory).toHaveLength(2)
+  expect(cap.error).toBeUndefined()
+  expect(cap.trajectory.every((s) => s.scope === 'coordinator')).toBe(true)
 })
