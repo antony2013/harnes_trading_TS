@@ -169,3 +169,43 @@ test('captureRun captures subagent-internal tool calls, scope-tagged', async () 
   expect(cap.trajectory[2].scope).toBe('quant')
   expect(cap.error).toBeUndefined()
 })
+
+/**
+ * Build an async iterable of tool calls that throws once the provided signal
+ * aborts — mirroring how a real deepagents@1.10.5 v3 iterable rejects with an
+ * AbortError when its AbortSignal is aborted. Yields tool calls one at a time
+ * with a zero-delay setTimeout between yields so the maxTurns cap can fire
+ * mid-stream and the abort is observed on the next yield.
+ */
+function abortableToolCalls(
+  count: number,
+  signal: AbortSignal,
+): AsyncIterable<{ name: string; input: any }> {
+  return (async function* () {
+    for (let i = 0; i < count; i++) {
+      if (signal.aborted) {
+        // Match the v3 iterable's AbortError rejection; the catch only checks
+        // signal.aborted, so the specific exception type is irrelevant here.
+        throw new DOMException('aborted', 'AbortError')
+      }
+      yield { name: 'get_ltp', input: { i } }
+      await new Promise((r) => setTimeout(r, 0))
+    }
+  })()
+}
+
+test('captureRun returns clean partial stop on maxTurns cap (no error)', async () => {
+  const ac = new AbortController()
+  const stream = {
+    messages: asyncIter([]),
+    toolCalls: abortableToolCalls(20, ac.signal),
+    subagents: asyncIter([]),
+  }
+  const cap = await captureRun(stream, { maxTurns: 2, signal: ac.signal, abort: () => ac.abort() })
+  // The cap fires at trajectory.length === 2 → abort() → the iterable throws on
+  // the next yield → Promise.all rejects → catch sees signal.aborted === true
+  // and returns a partial result WITHOUT setting error.
+  expect(cap.trajectory).toHaveLength(2)
+  expect(cap.error).toBeUndefined()
+  expect(cap.trajectory.every((s) => s.scope === 'coordinator')).toBe(true)
+})
