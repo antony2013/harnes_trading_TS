@@ -1,10 +1,6 @@
 // apps/deepagent/src/openshell/cli.ts
-export interface ExecResult {
-  output: string
-  exitCode: number
-  truncated?: boolean
-  parseWarning?: boolean
-}
+export type { ExecResult } from './backend'
+import type { ExecResult } from './backend'
 
 export const EXIT_MARKER = '<<<OPENSHELL_EXIT:'
 
