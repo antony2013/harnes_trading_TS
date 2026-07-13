@@ -1,8 +1,9 @@
 import { test, expect, beforeEach } from 'bun:test'
+import { ToolMessage } from '@langchain/core/messages'
 import { mkdtempSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { buildModel, resolveAgentConfig, workspaceDir, WORKSPACE_PERMISSIONS, buildBackend, buildAgent, PTC_ALLOWLIST, buildInterpreterMiddleware, READ_ONLY_TOOLS, SUBAGENTS } from './agent'
+import { buildModel, resolveAgentConfig, workspaceDir, WORKSPACE_PERMISSIONS, buildBackend, buildAgent, PTC_ALLOWLIST, buildInterpreterMiddleware, READ_ONLY_TOOLS, SUBAGENTS, buildReadFileContinuationMiddleware } from './agent'
 
 beforeEach(() => {
   process.env.AGENT_SETTINGS_PATH = `/tmp/agent-settings-${Math.random().toString(36).slice(2)}.json`
@@ -164,4 +165,40 @@ test('buildAgent: constructs with subagents without throwing', async () => {
   const agent = await buildAgent({ provider: 'ollama', apiKey: '', baseUrl: 'http://localhost:11434', model: 'llama3' })
   expect(agent).toBeTruthy()
   expect(existsSync(root)).toBe(true)
+})
+
+// ReadFileContinuationNoticeMiddleware (ported from NVIDIA's Nemotron Ultra harness
+// profile). Verifies the pagination-boundary notice: fires when read_file returns
+// exactly `limit` line-numbered lines, silent below the limit, pass-through for
+// non-read_file tools.
+test('buildReadFileContinuationMiddleware: appends notice when read_file returns == limit line-numbered lines', async () => {
+  const mw = buildReadFileContinuationMiddleware()
+  const lines = Array.from({ length: 100 }, (_, i) => `${i + 1}\tline ${i + 1}`).join('\n')
+  const handler = async () => new ToolMessage({ content: lines, tool_call_id: 'tc1', name: 'read_file' })
+  const out: any = await mw.wrapToolCall({ toolCall: { name: 'read_file', args: { offset: 0, limit: 100 } } }, handler)
+  expect(out.content).toContain('continues past this read window')
+  expect(out.content).toContain('offset=100')
+  expect(out.tool_call_id).toBe('tc1')
+  expect(out.name).toBe('read_file')
+})
+
+test('buildReadFileContinuationMiddleware: silent when read_file returns < limit lines', async () => {
+  const mw = buildReadFileContinuationMiddleware()
+  const lines = Array.from({ length: 50 }, (_, i) => `${i + 1}\tline ${i + 1}`).join('\n')
+  const handler = async () => new ToolMessage({ content: lines, tool_call_id: 'tc2', name: 'read_file' })
+  const out: any = await mw.wrapToolCall({ toolCall: { name: 'read_file', args: { offset: 0, limit: 100 } } }, handler)
+  expect(out.content).not.toContain('continues past this read window')
+})
+
+test('buildReadFileContinuationMiddleware: pass-through for non-read_file tools', async () => {
+  const mw = buildReadFileContinuationMiddleware()
+  const handler = async () => new ToolMessage({ content: 'ok', tool_call_id: 'tc3', name: 'get_ltp' })
+  const out: any = await mw.wrapToolCall({ toolCall: { name: 'get_ltp', args: {} } }, handler)
+  expect(out.content).toBe('ok')
+})
+
+test('buildReadFileContinuationMiddleware: returns truthy middleware object without throwing', () => {
+  const mw = buildReadFileContinuationMiddleware()
+  expect(mw).toBeTruthy()
+  expect(typeof mw.wrapToolCall).toBe('function')
 })

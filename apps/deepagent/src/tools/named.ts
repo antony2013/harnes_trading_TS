@@ -162,11 +162,14 @@ export const syncCandles = tool(
   {
     name: 'sync_candles',
     description:
-      'Fetch historical candles from Upstox and STORE them to a local SQLite file for later backtest reads. source=v2 interval 1minute|30minute|day|week|month (no unit); source=v3 needs unit minutes|hours|days + numeric interval. Returns {stored, chunks, file}. Example: instrument_key="NSE_INDEX|Nifty 50", source="v3", interval="5", unit="minutes", from_date="2026-06-01", to_date="2026-06-30".',
+      'Fetch historical candles from Upstox and STORE them to a local SQLite file for later backtest reads. source=v2 interval 1minute|30minute|day|week|month (no unit); source=v3 needs unit minutes|hours|days + numeric interval. For EXPIRED instruments use sync_expired_candles instead. Returns {stored, chunks, file}. Example: instrument_key="NSE_INDEX|Nifty 50", source="v3", interval="5", unit="minutes", from_date="2026-06-01", to_date="2026-06-30".',
     schema: z.object({
       instrument_key: z.string().min(1).describe('Upstox instrument key, e.g. "NSE_INDEX|Nifty 50"'),
-      source: z.enum(['v2', 'v3']).describe('Upstox API version'),
-      interval: z.string().min(1).describe('v2: 1minute|30minute|day|week|month. v3: numeric string e.g. "5"'),
+      source: z.enum(['v2', 'v3']).describe('Upstox historical API version (use sync_expired_candles for expired instruments)'),
+      interval: z
+        .string()
+        .min(1)
+        .describe('v2: 1minute|30minute|day|week|month. v3: numeric string e.g. "5"'),
       unit: z.enum(['minutes', 'hours', 'days']).optional().describe('Required when source=v3'),
       from_date: z.string().describe('Start date YYYY-MM-DD'),
       to_date: z.string().describe('End date YYYY-MM-DD'),
@@ -174,7 +177,34 @@ export const syncCandles = tool(
   },
 )
 
-// 9) Read previously-STORED candles for a sub-range.
+// 9) Sync (fetch + store) historical candles for an EXPIRED instrument.
+export const syncExpiredCandles = tool(
+  async ({ instrument_key, interval, from_date, to_date }) =>
+    apiCall('POST', '/backtest/data/sync-expired', undefined, {
+      instrumentKey: instrument_key,
+      interval,
+      fromDate: from_date,
+      toDate: to_date,
+    }),
+  {
+    name: 'sync_expired_candles',
+    description:
+      'Fetch historical candles for an EXPIRED Upstox instrument (expired futures/options contracts) and STORE them to a local SQLite file for later backtest reads. Uses the expired-instrument historical-candle API; interval is one of 1minute|3minute|5minute|15minute|30minute|day (NO week/month, NO unit — the expired endpoint supports no others). Lookback limits relative to toDate: 1/3/5/15minute=1 month, 30minute/day=1 year (auto-chunked). Read back with read_candles using timeframe=interval (e.g. "3minute" or "day"). Returns {stored, chunks, file}. Example: instrument_key="NSE_FO|54452|24-04-2025", interval="day", from_date="2024-01-01", to_date="2025-04-24".',
+    schema: z.object({
+      instrument_key: z
+        .string()
+        .min(1)
+        .describe('Expired Upstox instrument key, e.g. "NSE_FO|54452|24-04-2025"'),
+      interval: z
+        .enum(['1minute', '3minute', '5minute', '15minute', '30minute', 'day'])
+        .describe('Candle interval (expired API supports no others)'),
+      from_date: z.string().describe('Start date YYYY-MM-DD'),
+      to_date: z.string().describe('End date YYYY-MM-DD'),
+    }),
+  },
+)
+
+// 10) Read previously-STORED candles for a sub-range.
 export const readCandles = tool(
   async ({ instrument_key, timeframe, from_date, to_date }) =>
     apiCall(
@@ -185,7 +215,7 @@ export const readCandles = tool(
   {
     name: 'read_candles',
     description:
-      'Read previously-STORED historical candles (from a prior sync_candles) for a sub-range. timeframe is the canonical label: v2 raw (1minute|30minute|day|week|month) or v3 {interval}{unit} (e.g. 5minutes, 1days). Returns an array of {ts,open,high,low,close,volume}. 404 if no synced file covers the range. Example: instrument_key="NSE_INDEX|Nifty 50", timeframe="5minutes", from_date="2026-06-05", to_date="2026-06-10".',
+      'Read previously-STORED historical candles (from a prior sync_candles) for a sub-range. timeframe is the canonical label: v2 raw (1minute|30minute|day|week|month) or v3 {interval}{unit} (e.g. 5minutes, 1days). Returns an array of {ts,open,high,low,close,volume,oi} — oi is open interest (0 for equity, meaningful for F&O; null if the synced file predates the oi column). 404 if no synced file covers the range. Example: instrument_key="NSE_INDEX|Nifty 50", timeframe="5minutes", from_date="2026-06-05", to_date="2026-06-10".',
     schema: z.object({
       instrument_key: z.string().min(1).describe('Upstox instrument key'),
       timeframe: z.string().min(1).describe('Canonical timeframe label, e.g. "5minutes", "1days", "day"'),
@@ -195,7 +225,7 @@ export const readCandles = tool(
   },
 )
 
-// 10) Company profile (fundamentals) by ISIN.
+// 11) Company profile (fundamentals) by ISIN.
 export const companyProfile = tool(
   async ({ isin }) => apiCall('GET', `/fundamentals/profile/${enc(isin)}`),
   {
@@ -208,7 +238,7 @@ export const companyProfile = tool(
   },
 )
 
-// 11) Market news.
+// 12) Market news.
 export const news = tool(
   async ({ category, instrument_keys }) => {
     if (category === 'instrument_keys' && !instrument_keys) {

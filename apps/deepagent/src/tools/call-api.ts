@@ -31,7 +31,7 @@ Endpoints reachable via call_api (method GET|POST, path starts with "/", no quer
 - GET /expired-instruments/expiries?instrumentKey=<key> — expiry dates for an expired instrument
 - GET /expired-instruments/future-contracts?instrumentKey=<key>&expiryDate=<YYYY-MM-DD> — expired futures
 - GET /expired-instruments/option-contracts?instrumentKey=<key>&expiryDate=<YYYY-MM-DD> — expired options
-- GET /expired-instruments/historical-candles/<expiredInstrumentKey>/<interval>/<toDate>/<fromDate> — expired instrument candles (interval 1minute|30minute|day|week|month)
+- GET /expired-instruments/historical-candles/<expiredInstrumentKey>/<interval>/<toDate>/<fromDate> — expired instrument candles (interval 1minute|3minute|5minute|15minute|30minute|day)
 - GET /stream/market-data-feed/authorize — authorized wss URI for market-data feed
 - GET /stream/portfolio-stream-feed/authorize (header api-version required) — authorized URI for portfolio feed
 - GET /stream/subscriptions — current global subscription state
@@ -56,10 +56,10 @@ export const callApiTool = tool(
         .min(1)
         .describe('Full path starting with "/", without query string, e.g. "/market-info/pcr"'),
       query: z
-        .record(z.union([z.string(), z.number()]))
+        .record(z.string(), z.union([z.string(), z.number()]))
         .optional()
         .describe('Query params as an object, e.g. {instrumentKey:"NSE_INDEX|Nifty 50", expiry:"2026-06-26", date:"2026-06-10", bucketInterval:15}'),
-      body: z.record(z.unknown()).optional().describe('Request body object (POST only)'),
+      body: z.record(z.string(), z.unknown()).optional().describe('Request body object (POST only)'),
     }),
   },
 )

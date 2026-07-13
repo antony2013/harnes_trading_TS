@@ -33,6 +33,9 @@ export function toDateString(ms: number): string {
 export function chunkSizeMs(timeframe: string): number {
   // minute-level -> 1 month
   if (timeframe === '1minute') return 30 * DAY
+  // Expired/v2 intraday intervals (3/5/15minute) share 1minute's 1-month lookback.
+  if (timeframe === '3minute' || timeframe === '5minute' || timeframe === '15minute')
+    return 30 * DAY
   const minuteMatch = /^(\d+)minutes$/.exec(timeframe)
   if (minuteMatch && Number(minuteMatch[1]) <= 60) return 30 * DAY
   // 30min / hour / day -> 1 year
@@ -77,6 +80,7 @@ export type NewCandleRow = {
   low: number
   close: number
   volume: number | null
+  oi: number | null
 }
 
 /**
@@ -96,6 +100,7 @@ export function normalizeCandles(
     let ts: number
     let o: number, h: number, l: number, cl: number
     let v: number | null
+    let oi: number | null
     if (Array.isArray(c)) {
       ts = toEpochMs(c[0])
       o = +c[1]
@@ -103,6 +108,8 @@ export function normalizeCandles(
       l = +c[3]
       cl = +c[4]
       v = c[5] == null ? null : +c[5]
+      // candle[6] = open interest (0 for equity, meaningful for F&O). Absent -> null.
+      oi = c[6] == null ? null : +c[6]
     } else {
       ts = toEpochMs((c as any).timestamp ?? (c as any).ts)
       o = +(c as any).open
@@ -110,8 +117,12 @@ export function normalizeCandles(
       l = +(c as any).low
       cl = +(c as any).close
       v = (c as any).volume == null ? null : +(c as any).volume
+      oi =
+        (c as any).oi != null ? +(c as any).oi :
+        (c as any).open_interest != null ? +(c as any).open_interest :
+        null
     }
-    rows.push({ instrumentKey, timeframe, ts, open: o, high: h, low: l, close: cl, volume: v })
+    rows.push({ instrumentKey, timeframe, ts, open: o, high: h, low: l, close: cl, volume: v, oi })
   }
   return rows
 }

@@ -30,6 +30,9 @@ export const candles = sqliteTable(
     low: real('low').notNull(),
     close: real('close').notNull(),
     volume: integer('volume'),
+    // Open interest — Upstox returns it as the 7th candle element (candle[6]).
+    // 0 for equity; meaningful for F&O (futures/options). Nullable for safety.
+    oi: integer('oi'),
     createdAt: integer('created_at', { mode: 'timestamp' })
       .notNull()
       .$defaultFn(() => new Date()),

@@ -7,13 +7,14 @@ import {
   optionChain,
   marketStatus,
   syncCandles,
+  syncExpiredCandles,
   readCandles,
   companyProfile,
   news,
 } from './named'
 import { callApiTool } from './call-api'
 
-// 11 curated named tools + 1 generic call_api = 12 tools total.
+// 12 curated named tools + 1 generic call_api = 13 tools total.
 export const allTools = [
   searchInstruments,
   getLtp,
@@ -23,6 +24,7 @@ export const allTools = [
   optionChain,
   marketStatus,
   syncCandles,
+  syncExpiredCandles,
   readCandles,
   companyProfile,
   news,

@@ -1,5 +1,4 @@
 import { Elysia, t } from 'elysia'
-import { asc, between } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/bun-sqlite'
 import { Database } from 'bun:sqlite'
 import { fileURLToPath } from 'node:url'
@@ -17,6 +16,7 @@ import {
 
 const v2 = new UpstoxClient.HistoryApi()
 const v3 = new UpstoxClient.HistoryV3Api()
+const expiredApi = new UpstoxClient.ExpiredInstrumentApi()
 
 /** Promisify an SDK callback-style call. */
 function call<T>(fn: (cb: (err: any, data: T) => void) => void): Promise<T> {
@@ -56,6 +56,7 @@ CREATE TABLE IF NOT EXISTS candles (
   low REAL NOT NULL,
   close REAL NOT NULL,
   volume INTEGER,
+  oi INTEGER,
   created_at INTEGER NOT NULL
 )
 `
@@ -168,20 +169,23 @@ export const backtestData = new Elysia({ name: 'backtest-data' })
       const toMs = new Date(`${query.toDate}T23:59:59.999+05:30`).getTime()
       const sqlite = new Database(filePath)
       try {
-        const fileDb = drizzle(sqlite, { schema: { candles } })
-        const rows = await fileDb
-          .select({
-            ts: candles.ts,
-            open: candles.open,
-            high: candles.high,
-            low: candles.low,
-            close: candles.close,
-            volume: candles.volume,
-          })
-          .from(candles)
-          .where(between(candles.ts, fromMs, toMs))
-          .orderBy(asc(candles.ts))
-        return rows
+        // Raw SELECT * (not drizzle) so reads stay compatible with per-fetch files
+        // written before the `oi` column existed — those files simply lack the
+        // column and `r.oi` is undefined (mapped to null below). Mapping by name
+        // means column order doesn't matter.
+        const rows = sqlite.all(
+          'SELECT * FROM candles WHERE ts BETWEEN ? AND ? ORDER BY ts ASC',
+          [fromMs, toMs],
+        ) as Array<Record<string, any>>
+        return rows.map((r) => ({
+          ts: r.ts,
+          open: r.open,
+          high: r.high,
+          low: r.low,
+          close: r.close,
+          volume: r.volume,
+          oi: r.oi ?? null,
+        }))
       } finally {
         sqlite.close()
       }
@@ -286,6 +290,83 @@ export const backtestData = new Elysia({ name: 'backtest-data' })
         summary: 'Fetch + store historical candles (Upstox -> per-fetch SQLite file)',
         description:
           'Fetches candles from Upstox for the given instrument + timeframe + date range, chunks the range to respect Upstox lookback limits, and writes them to a FRESH SQLite file under apps/api/data/ named `<instrument>-<timeframe>-<fromDate>-<toDate>.sqlite` (replacing any existing file with the same name — "new DB each fetch"). `source` selects v2 or v3 Upstox API; for v3, `unit` is required. Returns `stored` (rows written), `chunks` (number of Upstox calls), and `file` (the file name written).',
+        tags: ['Backtest Data'],
+      },
+    },
+  )
+  // ── POST /backtest/data/sync-expired
+  // Same as /backtest/data/sync but for EXPIRED instruments — fetches via the Upstox
+  // expired-instrument historical-candle API. interval is the fixed set
+  // (1minute/3minute/5minute/15minute/30minute/day); chunkSizeMs already matches the
+  // expired lookback limits (1minute/3minute/5minute/15minute=1 month,
+  // 30minute/day=1 year, all relative to toDate). Writes to the SAME per-fetch
+  // SQLite layout, so the read endpoint (matched by instrumentKey + timeframe)
+  // works unchanged — read back with timeframe = interval.
+  .post(
+    '/backtest/data/sync-expired',
+    async ({ body, status }) => {
+      const { instrumentKey, interval, fromDate, toDate } = body
+      const fromMs = new Date(fromDate).getTime()
+      const toMs = new Date(toDate).getTime()
+      if (Number.isNaN(fromMs) || Number.isNaN(toMs)) {
+        return status(400, { message: 'fromDate / toDate must be valid YYYY-MM-DD' })
+      }
+      if (toMs < fromMs) {
+        return status(400, { message: 'toDate must be >= fromDate' })
+      }
+
+      // Expired intervals are already the canonical v2-style labels, so tf == interval.
+      const tf = interval
+      const sizeMs = chunkSizeMs(tf)
+      const chunks = chunkRange(fromMs, toMs, sizeMs)
+
+      // Fetch ALL chunks first; only create the file once every Upstox call has
+      // succeeded (avoids leaving a partial file on a 502).
+      const allRows: any[] = []
+      for (const [cFrom, cTo] of chunks) {
+        const toStr = toDateString(cTo)
+        const fromStr = toDateString(cFrom)
+        let raw: any
+        try {
+          raw = await call((cb) =>
+            expiredApi.getExpiredHistoricalCandleData(instrumentKey, interval, toStr, fromStr, cb),
+          )
+        } catch (err: any) {
+          return status(502, upstoxError(err, 'expired historical candle sync'))
+        }
+        allRows.push(...normalizeCandles(toPlain(raw), instrumentKey, tf))
+      }
+
+      const fileName = candleFileName(instrumentKey, tf, fromDate, toDate)
+      const filePath = join(dataDir, fileName)
+      const { sqlite, fileDb } = await createCandlesFile(filePath)
+      try {
+        if (allRows.length) await insertBatched(fileDb, allRows)
+      } finally {
+        sqlite.close()
+      }
+
+      return { stored: allRows.length, chunks: chunks.length, file: fileName }
+    },
+    {
+      body: t.Object({
+        instrumentKey: t.String({ minLength: 1 }),
+        interval: t.Union([
+          t.Literal('1minute'),
+          t.Literal('3minute'),
+          t.Literal('5minute'),
+          t.Literal('15minute'),
+          t.Literal('30minute'),
+          t.Literal('day'),
+        ]),
+        fromDate: t.String({ format: 'date' }),
+        toDate: t.String({ format: 'date' }),
+      }),
+      detail: {
+        summary:
+          'Fetch + store historical candles for an EXPIRED instrument (Upstox -> per-fetch SQLite file)',
+        description:
+          'Like POST /backtest/data/sync but for EXPIRED instruments — fetches via the Upstox expired-instrument historical-candle API. `interval` is one of 1minute|3minute|5minute|15minute|30minute|day (no v3/custom intervals, no week/month — the expired endpoint does not support them). Lookback limits relative to toDate: 1minute/3minute/5minute/15minute=1 month, 30minute/day=1 year; the range is auto-chunked to respect them. Writes to the SAME per-fetch SQLite file layout as /backtest/data/sync, so GET /backtest/data/candles/:instrumentKey/:timeframe reads it back unchanged (use timeframe = interval, e.g. "day"). Returns `stored`, `chunks`, and `file`.',
         tags: ['Backtest Data'],
       },
     },
