@@ -322,7 +322,7 @@ beforeEach(() => {
 })
 
 test('OpenShellCliBackend: getOrCreateWorkspace runs `sandbox create --name <id> --from <image>`', async () => {
-  const b = new OpenShellCliBackend({ binary: bin, image: 'img:1' })
+  const b = new OpenShellCliBackend({ binary: ['bash', bin], image: 'img:1' })
   const h = await b.getOrCreateWorkspace('w1')
   expect(h.id).toBe('w1')
   const calls = require('node:fs').readFileSync(join(dir, 'calls.log'), 'utf8')
@@ -332,7 +332,7 @@ test('OpenShellCliBackend: getOrCreateWorkspace runs `sandbox create --name <id>
 })
 
 test('OpenShellCliBackend: exec wraps command with exit marker + parses', async () => {
-  const b = new OpenShellCliBackend({ binary: bin, image: 'img:1' })
+  const b = new OpenShellCliBackend({ binary: ['bash', bin], image: 'img:1' })
   await b.getOrCreateWorkspace('w1')
   const r = await b.exec('w1', 'echo hello')
   expect(r.output).toBe('hello')
@@ -340,14 +340,14 @@ test('OpenShellCliBackend: exec wraps command with exit marker + parses', async 
 })
 
 test('OpenShellCliBackend: exec exit code propagates', async () => {
-  const b = new OpenShellCliBackend({ binary: bin, image: 'img:1' })
+  const b = new OpenShellCliBackend({ binary: ['bash', bin], image: 'img:1' })
   await b.getOrCreateWorkspace('w1')
   const r = await b.exec('w1', 'sh -c "exit 7"')
   expect(r.exitCode).toBe(7)
 })
 
 test('OpenShellCliBackend: destroy runs `sandbox delete --name <id>`', async () => {
-  const b = new OpenShellCliBackend({ binary: bin, image: 'img:1' })
+  const b = new OpenShellCliBackend({ binary: ['bash', bin], image: 'img:1' })
   await b.getOrCreateWorkspace('w1')
   await b.destroyWorkspace('w1')
   const calls = require('node:fs').readFileSync(join(dir, 'calls.log'), 'utf8')
@@ -368,15 +368,21 @@ Expected: FAIL — `Cannot find module './openshell-cli-backend'`.
 export interface RunCliResult { stdout: string; stderr: string; exitCode: number }
 
 export async function runCli(
-  binary: string,
+  binary: string | string[],
   args: string[],
   opts?: { timeoutMs?: number; input?: string }
 ): Promise<RunCliResult> {
-  const proc = Bun.spawn([binary, ...args], {
-    stdin: opts?.input ? 'pipe' : 'ignore',
-    stdout: 'pipe',
-    stderr: 'pipe',
-  })
+  // binary may be a single executable ("openshell") or a prefix list (e.g.
+  // ["bash", script] for tests on OSes that don't honor shebangs on
+  // extension-less scripts, or ["wsl", "--", "openshell"] for a future host).
+  const proc = Bun.spawn(
+    Array.isArray(binary) ? [...binary, ...args] : [binary, ...args],
+    {
+      stdin: opts?.input ? 'pipe' : 'ignore',
+      stdout: 'pipe',
+      stderr: 'pipe',
+    },
+  )
   if (opts?.input) {
     proc.stdin!.write(opts.input)
     await proc.stdin!.end()
@@ -411,7 +417,10 @@ import type { ExecutionBackend, ExecResult, WorkspaceHandle, WorkspaceInfo, Exec
 import { runCli, parseExecOutput, createArgs, execArgs, deleteArgs } from './cli'
 
 export interface OpenShellCliBackendOpts {
-  binary?: string
+  /** CLI to invoke: "openshell" (default, production) or a prefix list like
+   *  ["bash", script] for tests on OSes that don't honor shebangs on
+   *  extension-less scripts. */
+  binary?: string | string[]
   image: string
   defaultCwd?: string
   /** Bridge env injected into each sandbox at create time. */
@@ -419,7 +428,7 @@ export interface OpenShellCliBackendOpts {
 }
 
 export class OpenShellCliBackend implements ExecutionBackend {
-  private readonly binary: string
+  private readonly binary: string | string[]
   private readonly cwd: string
   constructor(private readonly opts: OpenShellCliBackendOpts) {
     this.binary = opts.binary ?? 'openshell'
