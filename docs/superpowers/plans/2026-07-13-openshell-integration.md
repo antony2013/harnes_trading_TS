@@ -305,7 +305,7 @@ case "$1" in
   sandbox)
     case "$2" in
       create) echo "ready" ;;            # last condition line for create
-      exec) shift 2; sh -c "$@" ;;       # run the command
+      exec) shift 2; while [ "$1" != "--" ]; do shift; done; shift; "$@" ;;  # strip --name/--cwd through -- , run the command after
       delete) ;;
       list) echo "NAME PHASE" ;;
     esac ;;
