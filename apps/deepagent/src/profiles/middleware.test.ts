@@ -8,10 +8,11 @@ const ctx = {
   ptcAllowlist: ['get_ltp'],
   interpreter: { executionTimeoutMs: 30000, subagents: true },
   parent: true,
+  allTools: [],
 }
 
 test('registry: exactly interpreter + coerceToolContent + readFileContinuation', () => {
-  expect(Object.keys(MIDDLEWARE_REGISTRY).sort()).toEqual(['coerceToolContent', 'interpreter', 'readFileContinuation'])
+  expect(Object.keys(MIDDLEWARE_REGISTRY).sort()).toEqual(['coerceToolContent', 'interpreter', 'openshell', 'readFileContinuation'])
 })
 
 test('registry: interpreter builds a truthy middleware (parent)', () => {
