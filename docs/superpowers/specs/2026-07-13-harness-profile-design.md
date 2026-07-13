@@ -17,7 +17,7 @@ NVIDIA's NemoClaw "harness profile" model (see `developer.nvidia.com` blog on Ne
 | Decision | Choice |
 |---|---|
 | Profile format | **JSONC** — JSON with `//` and `/* */` comments. Pure data, self-documenting per field, line-edit-safe for the ralph loop. Parsed by a tiny no-dep comment-stripper. |
-| Profile resolution | **`default.jsonc` base + per-model deep-merge override.** Always load `default.jsonc`; if `<provider>__<model>.jsonc` exists, deep-merge it on top. If `default.jsonc` is missing, fall back to a compiled-in `DEFAULT_PROFILE_DATA`. |
+| Profile resolution | **4-level chain, merged in order with the existing deep-merge rules:** (1) compiled-in `DEFAULT_PROFILE_DATA` (always, the floor) → (2) `profiles/default.jsonc` (global default) → (3) `profiles/<provider>__default.jsonc` (provider-level default, optional) → (4) `profiles/<provider>__<model>.jsonc` (model-specific, optional). Each later layer overrides earlier; `subagents` merge by name at every step. This lets a provider family share a base (no duplication across its models) while a model file stays tiny. |
 | Array merge | Objects deep-merge; `ptcAllowlist`/`middleware` **replace wholesale**; `subagents` **merge by name** (patch fields, new names append, omitted names kept); `flags` deep-merges (leaf booleans replace). |
 | Prompt model | **Fixed compiled-in base + tunable suffix.** `BASE_SYSTEM_PROMPT` (all domain/operational instructions) stays in code, untunable. Profile holds `systemPromptSuffix` (string). Dynamic IST-date prefix stays in code; on/off via `flags.injectTodayDate`. |
 | `profileVersion` | Integer top-level field, `const: 1` from day one. Required on the merged result, optional on individual files (inherit default's). Future v2 handled by `migrate(old)→new` keyed on this field. Not ralph-tunable. |
@@ -35,11 +35,10 @@ buildAgent(cfg)
   └─ profile = resolveProfile(loadProfile(provider, model))   [NEW]
        ├─ loadProfile  → ProfileData  (validated names, pure data)
        │    ├─ resolve path (AGENT_PROFILES_DIR || apps/deepagent/profiles)
-       │    ├─ read default.jsonc  (missing → compiled-in DEFAULT_PROFILE_DATA)
-       │    ├─ read <provider>__<model>.jsonc if exists
-       │    ├─ parse-jsonc each (strip comments → JSON.parse)
+       │    ├─ read layers in order: DEFAULT_PROFILE_DATA (compiled-in) → default.jsonc → <provider>__default.jsonc → <provider>__<model>.jsonc (last two optional)
+       │    ├─ parse-jsonc each file (strip comments → JSON.parse)
        │    ├─ ajv structural-validate each file against schema.json
-       │    ├─ deepMerge(base, override)  (subagents by-name)
+       │    ├─ deepMerge in order (subagents by-name at each step)
        │    └─ validateMerged: profileVersion===1, completeness, references
        └─ resolveProfile → ResolvedProfile  (names → Tool objects, built middleware)
             ├─ parentMiddleware = profile.middleware.map(name => MIDDLEWARE_REGISTRY[name](ctx))
@@ -118,23 +117,33 @@ Seeded verbatim from today's hardcoded values; `systemPromptSuffix` is empty so 
 }
 ```
 
-A per-model override file is a **partial** profile — only the fields it wants to change. Example `apps/deepagent/profiles/anthropic__claude-opus-4-8.jsonc`:
+A per-model override file is a **partial** profile — only the fields it wants to change. The provider-level default (`<provider>__default.jsonc`, also partial) sits between the global default and the model file, so a provider family can share settings without repeating them in every model file. Example `apps/deepagent/profiles/anthropic__default.jsonc`:
 
 ```jsonc
 {
   "profileVersion": 1,
-  "systemPromptSuffix": "Prefer tools over recall. Ask one clarifying question when the request is ambiguous.",
-  "interpreter": { "executionTimeoutMs": 30000, "subagents": true },
+  "systemPromptSuffix": "Prefer tools over recall. Prefer one clarifying question over guessing when ambiguous."
+}
+```
+
+And `apps/deepagent/profiles/anthropic__claude-opus-4-8.jsonc` (model-specific, on top of the provider default):
+
+```jsonc
+{
+  "profileVersion": 1,
+  "interpreter": { "executionTimeoutMs": 60000, "subagents": true },
   "subagents": [
-    { "name": "quant", "description": "...", "systemPrompt": "...", "tools": "readOnly",
-      "middleware": ["interpreter", "coerceToolContent", "readFileContinuation"] }
+    { "name": "quant", "systemPrompt": "You are a quant analyst ... (claude-tuned wording)." }
   ]
 }
 ```
-(Here `quant` is merged by name — its fields patch the default `quant`; `general-purpose` and `reporter` are kept from default; `ptcAllowlist`/`middleware` are kept from default because the override omits them.)
+Merged result for `anthropic:claude-opus-4-8`: built-in → `default.jsonc` → `anthropic__default.jsonc` (adds the suffix) → `anthropic__claude-opus-4-8.jsonc` (raises timeout to 60s, patches `quant`'s systemPrompt by name, keeps everything else from the layers below). `ptcAllowlist`/`parent middleware`/the other two subagents are inherited from `default.jsonc`. No duplication across anthropic models.
 
 ### Filename convention
-`<provider>__<sanitized-model>.jsonc` where `provider` ∈ `anthropic|openai|openrouter|ollama|custom` (the `Provider` union) and `sanitized-model` replaces every `[^A-Za-z0-9._-]` with `_` (handles openrouter model ids like `anthropic/claude-3.5-sonnet` → `anthropic_claude-3.5-sonnet`). Examples: `anthropic__claude-opus-4-8.jsonc`, `openai__gpt-4o.jsonc`, `ollama__llama3.jsonc`, `openrouter__anthropic_claude-3.5-sonnet.jsonc`, `custom__glm-5.2.jsonc`.
+`<provider>__<sanitized-model>.jsonc` where `provider` ∈ `anthropic|openai|openrouter|ollama|custom` (the `Provider` union) and `sanitized-model` replaces every `[^A-Za-z0-9._-]` with `_` (handles openrouter model ids like `anthropic/claude-3.5-sonnet` → `anthropic_claude-3.5-sonnet`). The provider-level default uses the literal `default` as the model part: `<provider>__default.jsonc`. Examples:
+- Global default: `default.jsonc`
+- Provider defaults: `anthropic__default.jsonc`, `openrouter__default.jsonc`
+- Model-specific: `anthropic__claude-opus-4-8.jsonc`, `openai__gpt-4o.jsonc`, `ollama__llama3.jsonc`, `openrouter__anthropic_claude-3.5-sonnet.jsonc`, `custom__glm-5.2.jsonc`
 
 ## JSON Schema — `apps/deepagent/src/profiles/schema.json`
 
@@ -258,20 +267,24 @@ export interface PromptSpec {
 
 `loadProfile(provider: string, model: string): ProfileData`
 
-1. **Path resolution.** `dir = process.env.AGENT_PROFILES_DIR || join(dirname(fileURLToPath(import.meta.url)), '../../profiles')` (from `src/profiles/loader.ts`, `../../profiles` → `apps/deepagent/profiles`). `sanitize(model) = model.replace(/[^A-Za-z0-9._-]/g, '_')`. Candidate files: `<dir>/default.jsonc` and `<dir>/<provider>__<sanitized-model>.jsonc`.
+1. **Path resolution.** `dir = process.env.AGENT_PROFILES_DIR || join(dirname(fileURLToPath(import.meta.url)), '../../profiles')` (from `src/profiles/loader.ts`, `../../profiles` → `apps/deepagent/profiles`). `sanitize(model) = model.replace(/[^A-Za-z0-9._-]/g, '_')`. The four layers, in precedence order (later overrides earlier):
+   - **(1) built-in:** `DEFAULT_PROFILE_DATA` from `defaults.ts` (always present — the floor).
+   - **(2) global:** `<dir>/default.jsonc` (shipped with repo).
+   - **(3) provider:** `<dir>/<provider>__default.jsonc` (optional).
+   - **(4) model:** `<dir>/<provider>__<sanitized-model>.jsonc` (optional).
 
-2. **Read + parse.** Read `default.jsonc`; if missing/enoent, use the compiled-in `DEFAULT_PROFILE_DATA` from `defaults.ts` (so the system never hard-fails). Read the per-model file if it exists. Parse each via `parseJsonc` (strip comments → `JSON.parse`).
+2. **Read + parse.** For each of layers 2–4, read the file if it exists; parse via `parseJsonc` (strip comments → `JSON.parse`). Layer 1 is the in-memory `DEFAULT_PROFILE_DATA`. A missing file is simply skipped (the next layer up still applies). The system never hard-fails because layer 1 always provides a complete floor.
 
-3. **Structural validate each file** against `schema.json` with `ajv`. On failure, throw `ProfileSchemaError(file, ajv.errorsText())` (names the file + the violating keyword/field).
+3. **Structural validate each file** (layers 2–4) against `schema.json` with `ajv`. On failure, throw `ProfileSchemaError(file, ajv.errorsText())` (names the file + the violating keyword/field). Layer 1 is compiled-in and trusted (no validation needed).
 
-4. **Deep-merge** `base ← default, override ← per-model` (if present) via `mergeProfiles(base, override)`:
-   - For each key in `override`:
+4. **Deep-merge in order.** `let result = DEFAULT_PROFILE_DATA`; for each present layer file (global → provider → model): `result = mergeProfiles(result, layer)` using the rules below. `subagents` merge by name at **each** step (so a provider default can patch the `quant` subagent and a model file can patch it further).
+   - For each key in `override` (the higher layer):
      - `subagents`: array-merge **by name** (see below).
      - `interpreter`, `flags`: plain objects → recurse (leaf replace).
      - `ptcAllowlist`, `middleware`, `systemPromptSuffix`, `profileVersion`: replace.
      - any other (schema-forbidden, so unreachable): replace.
-   - Keys present only in `base` are kept.
-   - **`subagents` by-name merge:** build an ordered list from `base` subagents. For each `override` subagent: if a base subagent with the same `name` exists, deep-merge its fields (`description`/`systemPrompt` replace; `tools`/`middleware` replace; `name` constant); else append it (preserving override order). Result: base order, new subagents appended in override order. Within a single subagent, `tools` and `middleware` are arrays → replace.
+   - Keys present only in the lower layer are kept.
+   - **`subagents` by-name merge:** build an ordered list from the lower layer's subagents. For each higher-layer subagent: if a lower subagent with the same `name` exists, deep-merge its fields (`description`/`systemPrompt` replace; `tools`/`middleware` replace; `name` constant); else append it (preserving higher-layer order). Result: lower-layer order, new subagents appended in higher-layer order. Within a single subagent, `tools` and `middleware` are arrays → replace.
 
 5. **Validate merged** (`validateMerged(data)`):
    - `profileVersion === 1` else `throw new ProfileVersionError(data.profileVersion, [1])`.
@@ -495,6 +508,7 @@ apps/deepagent/
 - **`loader.test.ts`**:
   - default-only load (`provider=ollama, model=llama3`, no per-model file) → `ProfileData` equals today's hardcoded values (ptcAllowlist 10, interpreter 30s/subagents true, parent middleware 3 names, subagents 3, flags injectTodayDate true, profileVersion 1, systemPromptSuffix "").
   - `AGENT_PROFILES_DIR` override + a per-model override file → deep-merge: arrays replace, subagents merge-by-name (patch + new + keep), objects merge, missing keys kept.
+  - **4-level chain:** with `default.jsonc` + `<provider>__default.jsonc` + `<provider>__<model>.jsonc` all present, layers apply in order (model > provider > global > built-in) — a field set by all four takes the model value; a field set only by the provider default is inherited by models that omit it; a field omitted everywhere resolves to the built-in floor. A model file with only `systemPromptSuffix` still inherits the provider default's other fields. Missing `default.jsonc` → built-in floor still yields a complete valid profile.
   - schema validation: a malformed file (bad type, unknown field, unknown tool-set name) → `ProfileSchemaError` naming the file + field.
   - reference validation: unknown middleware/tool name, duplicate subagent name, bad `profileVersion` → corresponding error.
   - missing `default.jsonc` → falls back to compiled-in `DEFAULT_PROFILE_DATA`.
@@ -523,5 +537,4 @@ After B, `apps/deepagent/profiles/<provider>__<model>.jsonc` is the **only writa
 - Sub-project A's harness-profile baseline run (deferred from A).
 - Exposing `PromptSpec` block-control to profiles (documented evolution path; not built).
 - Any new middleware, tool, subagent, or flag beyond what exists today (`injectTodayDate` is the only flag in v1).
-- Per-provider default profiles (`<provider>__default.jsonc`) — resolution is two-level (global default + exact per-model) per the locked decision.
 - Real-LLM smoke run (no key; LLM-free tests only, as in sub-project A).
