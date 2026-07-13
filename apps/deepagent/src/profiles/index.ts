@@ -1,0 +1,10 @@
+// apps/deepagent/src/profiles/index.ts
+export * from './types'
+export { parseJsonc } from './parse-jsonc'
+export { BLOCKS, BASE_BLOCK_ORDER, assembleBase } from './blocks'
+export { assembleSystemPrompt } from './prompt'
+export { MIDDLEWARE_REGISTRY, type MwCtx } from './middleware'
+export { buildInterpreterMiddleware, buildCoerceToolContentMiddleware, buildReadFileContinuationMiddleware } from './implementations'
+export { DEFAULT_PROFILE_DATA } from './defaults'
+export { resolveProfile, resolveTools } from './resolve'
+export { loadProfile, mergeProfiles, ProfileSchemaError, ProfileVersionError } from './loader'
