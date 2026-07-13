@@ -90,8 +90,9 @@ export async function buildAgent(cfg: AgentConfig) {
     systemPrompt,
     backend: buildBackend(root),
     permissions: WORKSPACE_PERMISSIONS,
-    middleware: profile.parentMiddleware,
-    subagents: profile.subagents,
+    // profiles layer stays import-free of deepagents types; cast at this seam
+    middleware: profile.parentMiddleware as any,
+    subagents: profile.subagents as any,
   })
 }
 
