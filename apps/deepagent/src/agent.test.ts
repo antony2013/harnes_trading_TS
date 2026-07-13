@@ -3,7 +3,8 @@ import { ToolMessage } from '@langchain/core/messages'
 import { mkdtempSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { buildModel, resolveAgentConfig, workspaceDir, WORKSPACE_PERMISSIONS, buildBackend, buildAgent, PTC_ALLOWLIST, buildInterpreterMiddleware, READ_ONLY_TOOLS, SUBAGENTS, buildReadFileContinuationMiddleware } from './agent'
+import { buildModel, resolveAgentConfig, workspaceDir, WORKSPACE_PERMISSIONS, buildBackend, buildAgent, PTC_ALLOWLIST, READ_ONLY_TOOLS, SUBAGENTS } from './agent'
+import { buildInterpreterMiddleware, buildReadFileContinuationMiddleware } from './profiles/implementations'
 
 beforeEach(() => {
   process.env.AGENT_SETTINGS_PATH = `/tmp/agent-settings-${Math.random().toString(36).slice(2)}.json`

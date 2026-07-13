@@ -1,8 +1,6 @@
 import { createDeepAgent, FilesystemBackend } from 'deepagents'
 import type { FilesystemPermission } from 'deepagents'
-import { createCodeInterpreterMiddleware } from '@langchain/quickjs'
 import type { BaseLanguageModel } from '@langchain/core/language_models/base'
-import { ToolMessage } from '@langchain/core/messages'
 import { ChatAnthropic } from '@langchain/anthropic'
 import { ChatOpenAI } from '@langchain/openai'
 import { ChatOllama } from '@langchain/ollama'
@@ -10,6 +8,7 @@ import { readFileSync, existsSync, mkdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { allTools } from './tools'
+import { buildInterpreterMiddleware, buildCoerceToolContentMiddleware, buildReadFileContinuationMiddleware } from './profiles/implementations'
 
 export const SYSTEM_PROMPT = `You are a trading assistant for the Indian stock market, backed by the local Upstox trading API.
 Use the provided tools to answer the user's question.
@@ -78,97 +77,6 @@ export const PTC_ALLOWLIST: string[] = [
  *  Excludes sync_candles + call_api — subagents never get the write/passthrough tools. */
 export const READ_ONLY_TOOLS = allTools.filter((t: any) => PTC_ALLOWLIST.includes(t.name))
 
-/** Build the code-interpreter middleware. opts.subagents === false disables the
- *  dynamic task() global (used for the quant subagent to bound recursion); the
- *  default (no arg) preserves the Phase A parent behavior (task() enabled). */
-export function buildInterpreterMiddleware(opts?: { subagents?: boolean }) {
-  return createCodeInterpreterMiddleware({
-    ptc: PTC_ALLOWLIST,
-    executionTimeoutMs: 30_000,
-    ...(opts?.subagents === false ? { subagents: false } : {}),
-  })
-}
-
-/** Coerce non-string ToolMessage content to a string before each model call.
- *  Some framework tools (the eval code interpreter, the task subagent, deepagents
- *  filesystem tools) return structured/Array content; LLM providers reject non-string
- *  tool-message content with "Non string tool message content is not supported".
- *  Named tools already return strings via apiCall, so this only rewrites the rest.
- *  For Array content it joins text blocks (with a JSON fallback per block); for other
- *  non-strings it JSON.stringifies. tool_call_id + name are preserved so the provider
- *  can still match the tool call. No-op when content is already a string. */
-export function buildCoerceToolContentMiddleware(): any {
-  return {
-    wrapModelCall: async (request: any, handler: any) => {
-      request.messages = request.messages.map((m: any) => {
-        if (!(m instanceof ToolMessage) || typeof m.content === 'string') return m
-        const coerced = Array.isArray(m.content)
-          ? m.content
-              .map((b: any) =>
-                typeof b === 'string' ? b : typeof b?.text === 'string' ? b.text : JSON.stringify(b),
-              )
-              .join('\n')
-          : JSON.stringify(m.content)
-        return new ToolMessage({
-          content: coerced,
-          tool_call_id: m.tool_call_id,
-          name: m.name,
-        })
-      })
-      return handler(request)
-    },
-  }
-}
-
-/** ReadFileContinuationNoticeMiddleware — TS port of NVIDIA's LangChain Deep Agents
- *  harness-profile middleware (see developer.nvidia.com blog on Nemotron Ultra
- *  harness profiles). When `read_file` returns exactly `limit` line-numbered lines,
- *  the file likely continues past the read window; append a notice telling the model
- *  to page forward with `offset+limit` instead of assuming it has seen the whole
- *  file. The deepagents `read_file` tool formats output as `<lineno>\t<content>` and
- *  slices to `limit` lines (zod default 100), so we count line-numbered lines and
- *  compare to the requested limit. No-op for every other tool, and no-op when the
- *  returned line count is below the limit (file ended within the window). */
-export function buildReadFileContinuationMiddleware(): any {
-  return {
-    name: 'ReadFileContinuationNoticeMiddleware',
-    wrapToolCall: async (request: any, handler: any) => {
-      const tc = request?.toolCall
-      if (tc?.name !== 'read_file') return handler(request)
-      const result = await handler(request)
-      // Only annotate ToolMessage results; pass through Command/other shapes.
-      if (!result || typeof result !== 'object' || !('tool_call_id' in result)) return result
-      const args = (tc.args ?? {}) as { offset?: number; limit?: number }
-      const limit = Number.isFinite(args.limit) ? Number(args.limit) : 100
-      const offset = Number.isFinite(args.offset) ? Number(args.offset) : 0
-      const content =
-        typeof result.content === 'string'
-          ? result.content
-          : Array.isArray(result.content)
-            ? result.content
-                .map((b: any) =>
-                  typeof b === 'string' ? b : typeof b?.text === 'string' ? b.text : JSON.stringify(b),
-                )
-                .join('\n')
-            : JSON.stringify(result.content ?? '')
-      // read_file numbers every returned line as `<lineno>\t<content>`.
-      const numberedLineCount = content
-        .split('\n')
-        .filter((l: string) => /^\d+\t/.test(l)).length
-      if (numberedLineCount < limit) return result
-      const notice =
-        `\n\n[The file likely continues past this read window — ${numberedLineCount} line-numbered lines were returned, equal to the limit of ${limit}. ` +
-        `To read further, call read_file again with offset=${offset + limit} (and the same limit). ` +
-        `Do not assume you have seen the end of the file unless a subsequent read returns fewer than ${limit} line-numbered lines.]`
-      return new ToolMessage({
-        content: content + notice,
-        tool_call_id: result.tool_call_id,
-        name: result.name,
-      })
-    },
-  }
-}
-
 const QUANT_PROMPT = `You are a quant analyst for the Indian stock market. Fetch candles with the market-data tools and compute indicators / aggregations in eval (RSI, MACD, moving averages, returns, vol). Return concise numeric results. Do not write files.`
 
 const GENERAL_PURPOSE_PROMPT = `You are a general-purpose research subagent for the Indian stock market. Use the market-data tools to search instruments, fetch LTP/OHLC/quotes, option chain, market status, company profile, and news. Summarize what you find concisely. Do not write files.`
@@ -180,7 +88,7 @@ const REPORTER_PROMPT = `You are a report writer. Given analysis results, write 
  *  general-purpose, which would inherit sync_candles + call_api. */
 export const SUBAGENTS = [
   { name: 'general-purpose', description: 'Research/fetch market data: instrument search, LTP, quotes, option chain, news, company profile.', systemPrompt: GENERAL_PURPOSE_PROMPT, tools: READ_ONLY_TOOLS },
-  { name: 'quant', description: 'Fetch candles and compute indicators/aggregations in eval (RSI, MACD, returns, vol).', systemPrompt: QUANT_PROMPT, tools: READ_ONLY_TOOLS, middleware: [buildInterpreterMiddleware({ subagents: false }), buildCoerceToolContentMiddleware(), buildReadFileContinuationMiddleware()] },
+  { name: 'quant', description: 'Fetch candles and compute indicators/aggregations in eval (RSI, MACD, returns, vol).', systemPrompt: QUANT_PROMPT, tools: READ_ONLY_TOOLS, middleware: [buildInterpreterMiddleware({ ptc: PTC_ALLOWLIST, subagents: false }), buildCoerceToolContentMiddleware(), buildReadFileContinuationMiddleware()] },
   { name: 'reporter', description: 'Write a markdown report/artifact to the workspace from provided analysis.', systemPrompt: REPORTER_PROMPT, tools: [] },
 ]
 
@@ -234,7 +142,7 @@ export async function buildAgent(cfg: AgentConfig) {
     systemPrompt,
     backend: buildBackend(root),
     permissions: WORKSPACE_PERMISSIONS,
-    middleware: [buildInterpreterMiddleware(), buildCoerceToolContentMiddleware(), buildReadFileContinuationMiddleware()],
+    middleware: [buildInterpreterMiddleware({ ptc: PTC_ALLOWLIST }), buildCoerceToolContentMiddleware(), buildReadFileContinuationMiddleware()],
     subagents: SUBAGENTS,
   })
 }
