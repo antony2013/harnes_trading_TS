@@ -38,10 +38,50 @@ export async function runCli(
     proc.stdin!.write(opts.input)
     await proc.stdin!.end()
   }
-  const [stdout, stderr, exitCode] = await Promise.all([
+
+  // Enforce opts.timeoutMs (forwarded from executionTimeoutMs via
+  // middleware -> pool -> backend -> here). Without this a hung sandbox
+  // command blocks proc.exited forever; per-id serialization + the
+  // idle-reaper skipping in-flight entries then permanently wedge that
+  // workspace. Spec error-handling: "the shell call is bounded by
+  // executionTimeoutMs; a hung wrapper surfaces as a timeout error, not a
+  // forever hang." Race proc.exited against a timer that kills the child;
+  // on timeout return a clear error marker (exitCode -1) so callers surface
+  // it instead of hanging.
+  let timedOut = false
+  const timer = opts?.timeoutMs
+    ? setTimeout(() => {
+        timedOut = true
+        try { proc.kill() } catch {}
+      }, opts.timeoutMs)
+    : null
+
+  let exitCode: number
+  try {
+    exitCode = await proc.exited
+  } catch {
+    // proc.kill() during await may reject proc.exited on some platforms;
+    // treat as a timeout-induced exit.
+    exitCode = timedOut ? -1 : -1
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+
+  if (timedOut) {
+    // Drain any partial streams so the child's pipes don't leak, then
+    // surface a clear timeout error per the spec's error contract.
+    try { await new Response(proc.stdout).text() } catch {}
+    try { await new Response(proc.stderr).text() } catch {}
+    return {
+      stdout: '',
+      stderr: `[error: execution timed out after ${opts!.timeoutMs}ms]`,
+      exitCode: -1,
+    }
+  }
+
+  const [stdout, stderr] = await Promise.all([
     new Response(proc.stdout).text(),
     new Response(proc.stderr).text(),
-    proc.exited,
   ])
   return { stdout, stderr, exitCode }
 }
