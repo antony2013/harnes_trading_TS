@@ -1,0 +1,11 @@
+// apps/deepagent/src/openshell/index.ts
+export { buildOpenShellMiddleware } from './middleware'
+export type { OpenShellMiddlewareOpts } from './middleware'
+export { OpenShellCliBackend } from './openshell-cli-backend'
+export { InMemoryExecutionBackend } from './backend'
+export type { ExecutionBackend, ExecResult, ExecOpts, WorkspaceHandle, WorkspaceInfo } from './backend'
+export { WorkspacePool, getWorkspacePool, _resetWorkspacePoolSingleton } from './pool'
+export { startToolBridge, getToolBridge, _resetToolBridgeSingleton } from './bridge'
+export type { ToolBridge, ToolBridgeOpts } from './bridge'
+export { generateWrappers } from './wrappers'
+export { parseExecOutput, EXIT_MARKER } from './cli'

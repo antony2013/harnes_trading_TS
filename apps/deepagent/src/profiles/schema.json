@@ -17,6 +17,17 @@
       }
     },
     "middleware": { "type": "array", "items": { "type": "string" } },
+    "openshell": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "image": { "type": "string" },
+        "idleTimeoutMs": { "type": "integer", "minimum": 1 },
+        "bridgePort": { "type": "integer", "minimum": 0 },
+        "executionTimeoutMs": { "type": "integer", "minimum": 1 }
+      },
+      "required": ["image", "idleTimeoutMs", "bridgePort", "executionTimeoutMs"]
+    },
     "subagents": {
       "type": "array",
       "items": {

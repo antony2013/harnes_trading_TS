@@ -202,3 +202,13 @@ test('buildReadFileContinuationMiddleware: returns truthy middleware object with
   expect(mw).toBeTruthy()
   expect(typeof mw.wrapToolCall).toBe('function')
 })
+
+test('workspaceDir: per-workspace subdir when id given', () => {
+  process.env.AGENT_WORKSPACE_DIR = '/tmp/ws-root'
+  expect(workspaceDir('wA').replace(/\\/g, '/')).toMatch(/\/ws-root\/wA$/)
+})
+
+test('workspaceDir: no id preserves today behavior (root only)', () => {
+  process.env.AGENT_WORKSPACE_DIR = '/tmp/ws-root'
+  expect(workspaceDir().replace(/\\/g, '/')).toBe('/tmp/ws-root')
+})

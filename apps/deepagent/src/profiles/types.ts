@@ -8,6 +8,14 @@ export interface InterpreterSpec {
 /** "readOnly" | "all" | "none" | explicit tool-name list. */
 export type ToolSetSpec = 'readOnly' | 'all' | 'none' | string[]
 
+/** OpenShell sandbox spec. Present only when `middleware` includes 'openshell'. */
+export interface OpenShellSpec {
+  image: string
+  idleTimeoutMs: number
+  bridgePort: number
+  executionTimeoutMs: number
+}
+
 export interface SubagentSpec {
   name: string
   description: string
@@ -28,6 +36,7 @@ export interface ProfileData {
   middleware: string[]      // parent middleware names, in order
   subagents: SubagentSpec[]
   flags: ProfileFlags
+  openshell?: OpenShellSpec  // present only when middleware includes 'openshell'
 }
 
 /** Names resolved to real Tool objects + built middleware. Output of resolveProfile. */
