@@ -7,7 +7,8 @@ import {
   type AgentSettings,
   type Provider,
 } from './settings'
-import { buildAgent, buildModel, type AgentConfig } from '@harnesh-trading-ts/deepagent'
+import { buildAgent, buildModel, workspaceDir, type AgentConfig } from '@harnesh-trading-ts/deepagent'
+import { mkdirSync } from 'node:fs'
 
 const PROVIDER_LITERAL = t.Union([
   t.Literal('anthropic'),
@@ -157,6 +158,9 @@ export const agent = new Elysia({ name: 'agent' })
         return
       }
 
+      const workspaceId = (body.workspaceId as string) || '__default__'
+      mkdirSync(workspaceDir(workspaceId), { recursive: true })
+
       let agent
       try {
         agent = await buildAgent(s)
@@ -168,9 +172,10 @@ export const agent = new Elysia({ name: 'agent' })
       try {
         // LangChain v2 streamEvents: a single interleaved event stream.
         // deepagents' typed override targets v3; cast to any to use the stable v2 events.
+        // configurable.workspace_id keys the openshell sandbox workspace (Task 7 middleware).
         const stream = (agent as any).streamEvents(
           { messages: body.messages },
-          { version: 'v2', signal: request.signal },
+          { version: 'v2', signal: request.signal, configurable: { workspace_id: workspaceId } },
         )
         for await (const ev of stream) {
           if (ev.event === 'on_chat_model_stream') {
@@ -196,6 +201,7 @@ export const agent = new Elysia({ name: 'agent' })
     },
     {
       body: t.Object({
+        workspaceId: t.Optional(t.String()),
         messages: t.Array(
           t.Object({
             role: t.Union([t.Literal('user'), t.Literal('assistant'), t.Literal('system')]),
