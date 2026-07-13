@@ -1,5 +1,10 @@
 // apps/deepagent/src/eval/run.ts (Task 6 portion)
-import type { TrajectoryStep } from './types'
+import type { TrajectoryStep, EvalCase, EvalResult } from './types'
+import { startStubServer } from './stub-server'
+import { createSeededWorkspace } from './workspace'
+import { gradeCase } from './assertions'
+import { ALL_CASES } from './cases'
+import { buildAgent, type AgentConfig } from '../agent'
 
 export interface RunCapture {
   trajectory: TrajectoryStep[]
@@ -40,4 +45,71 @@ export async function captureRun(
     return { trajectory, finalAnswer, error: err?.message ?? String(err) }
   }
   return { trajectory, finalAnswer }
+}
+
+// apps/deepagent/src/eval/run.ts (Task 7 portion)
+export interface RunSuiteOptions {
+  cfg: AgentConfig
+  cases?: EvalCase[]
+  categories?: string[]
+  /** Test seam: defaults to the real buildAgent. The ralph loop (C) will add a `profile?` here. */
+  buildAgentFn?: (cfg: AgentConfig) => Promise<any>
+}
+
+async function runCase(c: EvalCase, cfg: AgentConfig, build: (cfg: AgentConfig) => Promise<any>): Promise<EvalResult> {
+  const started = Date.now()
+  const server = await startStubServer(c.stubRoutes)
+  const ws = createSeededWorkspace(c.workspaceSeed)
+  const prevApi = process.env.API_BASE_URL
+  const prevWs = process.env.AGENT_WORKSPACE_DIR
+  process.env.API_BASE_URL = server.url
+  process.env.AGENT_WORKSPACE_DIR = ws.dir
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), c.timeoutMs ?? 60_000)
+  try {
+    const agent = await build(cfg)
+    const stream = agent.streamEvents(
+      { messages: [{ role: 'user', content: c.prompt }] },
+      { version: 'v2', signal: controller.signal },
+    )
+    const cap = await captureRun(stream, { maxTurns: c.maxTurns ?? 8, signal: controller.signal })
+    const assertionResults = gradeCase(c.assertions, cap.trajectory)
+    return {
+      caseId: c.id,
+      category: c.category,
+      passed: assertionResults.every((r) => r.passed) && !cap.error,
+      trajectory: cap.trajectory,
+      assertionResults,
+      finalAnswer: cap.finalAnswer || undefined,
+      error: cap.error,
+      durationMs: Date.now() - started,
+    }
+  } catch (err: any) {
+    return {
+      caseId: c.id,
+      category: c.category,
+      passed: false,
+      trajectory: [],
+      assertionResults: [],
+      error: err?.message ?? String(err),
+      durationMs: Date.now() - started,
+    }
+  } finally {
+    clearTimeout(timer)
+    await server.stop()
+    ws.cleanup()
+    process.env.API_BASE_URL = prevApi
+    process.env.AGENT_WORKSPACE_DIR = prevWs
+  }
+}
+
+export async function runSuite(opts: RunSuiteOptions): Promise<EvalResult[]> {
+  const all = opts.cases ?? ALL_CASES
+  const filtered = opts.categories ? all.filter((c) => opts.categories!.includes(c.category)) : all
+  const build = opts.buildAgentFn ?? buildAgent
+  const results: EvalResult[] = []
+  for (const c of filtered) {
+    results.push(await runCase(c, opts.cfg, build))
+  }
+  return results
 }
