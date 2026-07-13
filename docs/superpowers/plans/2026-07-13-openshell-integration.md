@@ -699,6 +699,13 @@ test('ToolBridge: binds to 127.0.0.1', async () => {
   // port 0 -> OS-assigned; the server reports the actual port
   expect(bridge.port).toBeGreaterThan(0)
 })
+
+test('ToolBridge: honors a pre-supplied token (used by openshell middleware so sandbox env + lazy bind match)', async () => {
+  bridge = await startToolBridge({ port: 0, allowedTools: allowed, allTools, token: 'fixed-tok' })
+  expect(bridge.token).toBe('fixed-tok')
+  expect((await callBridge('get_ltp', { instrument: 'NIFTY' }, 'fixed-tok')).status).toBe(200)
+  expect((await callBridge('get_ltp', { instrument: 'NIFTY' }, 'wrong')).status).toBe(401)
+})
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -717,6 +724,10 @@ export interface ToolBridgeOpts {
   allowedTools: string[]     // ptcAllowlist
   allTools: any[]            // StructuredTool[]
   requestTimeoutMs?: number
+  /** Pre-generated bearer token. If omitted, one is generated at bind time.
+   *  Passed in by the openshell middleware so the sandbox env (baked at create
+   *  time, before the server lazily binds) and the lazy bind use the SAME token. */
+  token?: string
 }
 
 export interface ToolBridge {
@@ -727,7 +738,7 @@ export interface ToolBridge {
 }
 
 export async function startToolBridge(opts: ToolBridgeOpts): Promise<ToolBridge> {
-  const token = randomUUID()
+  const token = opts.token ?? randomUUID()
   const allowed = new Set(opts.allowedTools)
   const byName = new Map(opts.allTools.map((t) => [t.name, t] as const))
   const requestTimeoutMs = opts.requestTimeoutMs ?? 30_000
@@ -771,7 +782,7 @@ export function _resetToolBridgeSingleton(): void { _singleton?.stop(); _singlet
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `cd apps/deepagent && bun test src/openshell/bridge.test.ts`
-Expected: 5 pass.
+Expected: 6 pass.
 
 - [ ] **Step 5: Commit**
 
@@ -990,6 +1001,7 @@ Expected: FAIL — `Cannot find module './middleware'`.
 
 ```ts
 // apps/deepagent/src/openshell/middleware.ts
+import { randomUUID } from 'node:crypto'
 import { tool } from '@langchain/core/tools'
 import { z } from 'zod'
 import type { AgentMiddleware } from '@langchain/core/multi_agent'
@@ -1011,11 +1023,17 @@ export interface OpenShellMiddlewareOpts {
 }
 
 export function buildOpenShellMiddleware(opts: OpenShellMiddlewareOpts): AgentMiddleware {
+  // Generate the bearer token eagerly (cheap, no I/O) so the sandbox env baked at
+  // create-time and the lazily-bound bridge use the SAME token. The server itself
+  // binds lazily on the first shell call (below) — resolveProfile/tests start no server.
+  const bridgeToken = randomUUID()
+  const bridgeHost = opts.bridgeHost ?? 'host.docker.internal'
   const backend = opts.backend ?? new OpenShellCliBackend({
     image: opts.image,
     bridgeEnv: {
-      OPENSHELL_BRIDGE_HOST: opts.bridgeHost ?? 'host.docker.internal',
+      OPENSHELL_BRIDGE_HOST: bridgeHost,
       OPENSHELL_BRIDGE_PORT: String(opts.bridgePort),
+      OPENSHELL_BRIDGE_TOKEN: bridgeToken,
     },
   })
   const pool = getWorkspacePool(backend, { idleTimeoutMs: opts.idleTimeoutMs })
@@ -1024,6 +1042,9 @@ export function buildOpenShellMiddleware(opts: OpenShellMiddlewareOpts): AgentMi
     async ({ command, upload, download }, config: any) => {
       const wid = config?.configurable?.workspace_id ?? config?.configurable?.thread_id ?? '__default__'
       try {
+        // Lazily bind the bridge on first shell call (process singleton). Pre-supplied
+        // token matches what the sandbox already has in its env. No-op after the first call.
+        await getToolBridge({ port: opts.bridgePort, allowedTools: opts.ptcAllowlist, allTools: opts.allTools, token: bridgeToken })
         const r = await pool.exec(wid, command, { upload, download, timeoutMs: opts.executionTimeoutMs })
         return `${r.output}\n\n[exit: ${r.exitCode}] [persistent shell: cwd, env, installed packages, and /workspace files persist across your shell calls within this workspace]${r.parseWarning ? ' [warning: exit marker not found, output may be incomplete]' : ''}`
       } catch (err: any) {
@@ -1041,9 +1062,6 @@ export function buildOpenShellMiddleware(opts: OpenShellMiddlewareOpts): AgentMi
       }),
     }
   )
-
-  // Ensure the bridge is started (process singleton) so wrappers can reach it.
-  void getToolBridge({ port: opts.bridgePort, allowedTools: opts.ptcAllowlist, allTools: opts.allTools })
 
   const mw: AgentMiddleware = {
     name: 'OpenShellMiddleware', // unique — must not collide with CodeInterpreterMiddleware
@@ -1306,39 +1324,111 @@ git commit -m "feat(agent): workspaceDir accepts optional workspaceId for per-wo
 - [ ] **Step 1: Write the failing test**
 
 ```ts
-// apps/api/src/modules/agent/index.test.ts (new — minimal route test using the app)
-import { test, expect } from 'bun:test'
-// Test that the route passes workspace_id into the agent's configurable by spying on buildAgent.
-// (Pattern: mount the agent module with a stubbed buildAgent that records configurable.)
-// See existing apps/api test patterns for the Elysia app harness.
+// apps/api/src/modules/agent/index.test.ts (new)
+import { test, expect, beforeEach, mock } from 'bun:test'
+import { writeSettings } from './settings'
+
+// Record what streamEvents receives so we can assert the route threaded workspace_id through.
+let recordedConfigurable: any
+
+// Stub the deepagent package BEFORE ./index imports it. The route only uses
+// buildAgent + buildModel from this package; buildModel isn't reached by /agent/chat.
+mock.module('@harnesh-trading-ts/deepagent', () => ({
+  buildAgent: async () => ({
+    // Fake agent: record configurable, emit no events, let the route yield `done`.
+    streamEvents: async function* (_input: any, opts: any) {
+      recordedConfigurable = opts?.configurable
+    },
+  }),
+  buildModel: () => ({}),
+}))
+
+// Import AFTER mock.module so the route picks up the stubbed buildAgent.
+const { agent } = await import('./index')
+
+beforeEach(() => {
+  process.env.AGENT_SETTINGS_PATH = `/tmp/agent-settings-${Math.random().toString(36).slice(2)}.json`
+  recordedConfigurable = undefined
+  // Configure the agent so readSettings() returns a valid model and the route proceeds to buildAgent.
+  writeSettings({ provider: 'ollama', baseUrl: 'http://localhost:11434', model: 'llama3', apiKey: '' })
+})
+
 test('POST /agent/chat passes body.workspaceId as configurable.workspace_id to streamEvents', async () => {
-  // ... use the existing API test harness to invoke the route with a stubbed agent
-  // Assert the stub received { configurable: { workspace_id: 'wA' } }.
-  expect(true).toBe(true) // placeholder replaced by real harness assertions per existing api test style
+  const res = await agent.handle(
+    new Request('http://localhost/agent/chat', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        workspaceId: 'wA',
+        messages: [{ role: 'user', content: 'hi' }],
+      }),
+    }),
+  )
+  expect(res.status).toBe(200)
+  // Drain the SSE stream so the handler runs to completion (the stub yields nothing; route then yields `done`).
+  await res.text()
+  expect(recordedConfigurable).toEqual({ workspace_id: 'wA' })
+})
+
+test('POST /agent/chat defaults workspace_id to __default__ when body omits workspaceId', async () => {
+  const res = await agent.handle(
+    new Request('http://localhost/agent/chat', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ messages: [{ role: 'user', content: 'hi' }] }),
+    }),
+  )
+  expect(res.status).toBe(200)
+  await res.text()
+  expect(recordedConfigurable).toEqual({ workspace_id: '__default__' })
 })
 ```
-*(Implement the real assertions following the existing `apps/api` test harness style — spy on `buildAgent`/`streamEvents`, POST a body `{ workspaceId: 'wA', messages: [...] }`, assert the spy saw `configurable.workspace_id === 'wA'`.)*
 
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `cd apps/api && bun test src/modules/agent/index.test.ts`
-Expected: FAIL — route doesn't read `workspaceId` / doesn't pass `configurable`.
+Expected: FAIL — the route doesn't read `body.workspaceId` and doesn't pass `configurable`, so `recordedConfigurable` is `undefined` (or the body schema rejects `workspaceId`).
 
 - [ ] **Step 3: Write minimal implementation**
 
-In `apps/api/src/modules/agent/index.ts`, the `POST /agent/chat` handler:
+In `apps/api/src/modules/agent/index.ts`:
+
+1. Add `workspaceDir` to the deepagent import and `mkdirSync` from `node:fs`:
 ```ts
-// inside the handler, after readSettings() + before buildAgent:
+import { buildAgent, buildModel, workspaceDir, type AgentConfig } from '@harnesh-trading-ts/deepagent'
+import { mkdirSync } from 'node:fs'
+```
+(`workspaceDir` is already exported from `apps/deepagent/src/agent.ts`; confirm it is re-exported from the package entry `apps/deepagent/src/index.ts` — add it there if missing.)
+
+2. In the `POST /agent/chat` handler, after the `readSettings()` guard and before `buildAgent(s)`, resolve + mkdir the per-workspace dir:
+```ts
 const workspaceId = (body.workspaceId as string) || '__default__'
-const wsRoot = workspaceDir(workspaceId)
-mkdirSync(wsRoot, { recursive: true })
-// ... buildAgent(s) ...
-agent.streamEvents(
+mkdirSync(workspaceDir(workspaceId), { recursive: true })
+```
+
+3. Pass `configurable` into `streamEvents`:
+```ts
+const stream = (agent as any).streamEvents(
   { messages: body.messages },
-  { version: 'v2', signal: request.signal, configurable: { workspace_id: workspaceId } }
+  { version: 'v2', signal: request.signal, configurable: { workspace_id: workspaceId } },
 )
 ```
-Import `workspaceDir` from `@harnesh-trading-ts/deepagent` (re-export it from `apps/deepagent/src/index.ts` or the agent module's public exports — ensure `workspaceDir` is exported, which it already is) and `mkdirSync` from `node:fs`. The `ToolBridge` is started lazily by the openshell middleware (Task 7) on first use; no explicit boot needed in the route for v1. Add `workspaceId` to the route body schema (Elysia typing).
+
+4. Add `workspaceId` to the body schema (optional string):
+```ts
+body: t.Object({
+  workspaceId: t.Optional(t.String()),
+  messages: t.Array(
+    t.Object({
+      role: t.Union([t.Literal('user'), t.Literal('assistant'), t.Literal('system')]),
+      content: t.String(),
+    }),
+    { minItems: 1 },
+  ),
+}),
+```
+
+The `ToolBridge` starts lazily inside the openshell middleware on the first `shell` call (Task 7); no explicit bridge boot in the route for v1.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -1450,46 +1540,55 @@ git commit -m "feat(openshell): minimal Ubuntu LTS sandbox image + wrapper bake 
 ```ts
 // apps/deepagent/src/openshell/integration.test.ts
 import { test, expect, beforeAll, afterAll } from 'bun:test'
-import { buildOpenShellMiddleware, startToolBridge, _resetWorkspacePoolSingleton, _resetToolBridgeSingleton } from './openshell'
+import { buildOpenShellMiddleware, _resetWorkspacePoolSingleton, _resetToolBridgeSingleton } from './openshell'
 import { tool } from '@langchain/core/tools'
 import { z } from 'zod'
 
+// Gated: only runs when OPENSHELL_AVAILABLE=1 AND Docker + the built image are present.
+// The bridge binds lazily on the first shell call (process singleton) at bridgePort 7777
+// (matches the image's baked OPENSHELL_BRIDGE_PORT). The middleware generates the token
+// and bakes it into the sandbox env; the lazy bind reuses that same token, so wrappers
+// inside the sandbox authenticate successfully — no test-side token plumbing needed.
 const RUN = !!process.env.OPENSHELL_AVAILABLE
 const itIf = RUN ? test : test.skip
+const PORT = 7777
 
 const getLtp = tool(async ({ instrument }) => ({ price: 123, instrument }), { name: 'get_ltp', schema: z.object({ instrument: z.string() }) })
-let bridge: any
-beforeAll(async () => { if (RUN) { _resetWorkspacePoolSingleton(); _resetToolBridgeSingleton(); bridge = await startToolBridge({ port: 0, allowedTools: ['get_ltp'], allTools: [getLtp] }) } })
-afterAll(() => { bridge?.stop() })
+
+beforeAll(() => { if (RUN) { _resetWorkspacePoolSingleton(); _resetToolBridgeSingleton() } })
+afterAll(() => { if (RUN) { _resetToolBridgeSingleton(); _resetWorkspacePoolSingleton() } })
+// NOTE: leftover sandboxes (int-w1/w2/w3) are not force-destroyed here; idle-reap or
+// `openshell sandbox delete --name <id>` cleans them. Acceptable for a manually-gated run.
+
+const mk = () => {
+  const mw = buildOpenShellMiddleware({
+    image: 'harnesh/agent-sandbox:ubuntu-lts', idleTimeoutMs: 60_000, bridgePort: PORT,
+    executionTimeoutMs: 30_000, ptcAllowlist: ['get_ltp'], allTools: [getLtp],
+  })
+  return (mw as any).tools.find((t: any) => t.name === 'shell')
+}
 
 itIf('e2e: shell echo + exit code', async () => {
-  const mw = buildOpenShellMiddleware({ image: 'harnesh/agent-sandbox:ubuntu-lts', idleTimeoutMs: 60_000, bridgePort: bridge.port, executionTimeoutMs: 30_000, ptcAllowlist: ['get_ltp'], allTools: [getLtp] })
-  const shellTool = (mw as any).tools.find((t: any) => t.name === 'shell')
-  const res = await shellTool.invoke({ command: 'echo hello' }, { configurable: { workspace_id: 'int-w1' } })
-  expect(res).toContain('hello'); expect(res).toContain('exit: 0')
+  const shell = mk()
+  const res = await shell.invoke({ command: 'echo hello' }, { configurable: { workspace_id: 'int-w1' } })
+  expect(res).toContain('hello')
+  expect(res).toContain('exit: 0')
 })
 
 itIf('e2e: persistent state across calls', async () => {
-  const mw = buildOpenShellMiddleware({ image: 'harnesh/agent-sandbox:ubuntu-lts', idleTimeoutMs: 60_000, bridgePort: bridge.port, executionTimeoutMs: 30_000, ptcAllowlist: ['get_ltp'], allTools: [getLtp] })
-  const shellTool = (mw as any).tools.find((t: any) => t.name === 'shell')
-  await shellTool.invoke({ command: 'X=42' }, { configurable: { workspace_id: 'int-w2' } })
-  const res = await shellTool.invoke({ command: 'echo $X' }, { configurable: { workspace_id: 'int-w2' } })
+  const shell = mk()
+  await shell.invoke({ command: 'X=42' }, { configurable: { workspace_id: 'int-w2' } })
+  const res = await shell.invoke({ command: 'echo $X' }, { configurable: { workspace_id: 'int-w2' } })
   expect(res).toContain('42')
 })
 
 itIf('e2e: wrapper round-trip via bridge (get_ltp)', async () => {
-  const mw = buildOpenShellMiddleware({ image: 'harnesh/agent-sandbox:ubuntu-lts', idleTimeoutMs: 60_000, bridgePort: bridge.port, executionTimeoutMs: 30_000, ptcAllowlist: ['get_ltp'], allTools: [getLtp] })
-  const shellTool = (mw as any).tools.find((t: any) => t.name === 'shell')
-  const res = await shellTool.invoke({ command: 'get_ltp --instrument NIFTY' }, { configurable: { workspace_id: 'int-w3' } })
+  const shell = mk()
+  const res = await shell.invoke({ command: 'get_ltp --instrument NIFTY' }, { configurable: { workspace_id: 'int-w3' } })
   expect(res).toContain('123')
 })
-
-itIf('e2e: wrong bridge token -> wrapper error', async () => {
-  // A second bridge with a different token; wrappers baked with bridge#1's token will 401.
-  // (Covered by unit bridge test; here we assert the e2e path doesn't hang.)
-  expect(true).toBe(true)
-})
 ```
+(The 401/wrong-token case is covered by the unit `bridge.test.ts` "honors a pre-supplied token" test; no e2e duplicate is needed.)
 
 - [ ] **Step 2: Run (skip when ungated)**
 
@@ -1560,10 +1659,16 @@ subprocess and Docker (the compute backend) is available.
    (`apps/deepagent/profiles/<provider>__<model>.jsonc` — see example).
 5. `bun run dev` (from WSL2).
 
-The tool bridge binds 127.0.0.1:<bridgePort> with a per-process bearer token;
-sandboxes reach it via the host gateway (host.docker.internal). Sandboxes idle-reap
-after `openshell.idleTimeoutMs`. Author files inside the sandbox; export final
+The tool bridge binds 127.0.0.1:<bridgePort> lazily on the first `shell` call
+(per-process bearer token generated at agent build, baked into the sandbox env
+so the lazy bind and the sandbox share one token); sandboxes reach it via the
+host gateway (host.docker.internal). Sandboxes idle-reap after
+`openshell.idleTimeoutMs`. Author files inside the sandbox; export final
 artifacts to the host workspace via `shell`'s `download`.
+
+v1 limitation: the bridge + workspace pool are process-singletons (first
+config wins). Production is single-profile, so this is fine; multi-profile
+support would require keying the singletons by profile/bridgePort.
 
 Alpha caveat: OpenShell is v0.0.x alpha with no TS SDK; v1 integrates via the CLI
 subprocess. The ExecutionBackend interface isolates us from CLI/SDK churn.
@@ -1587,7 +1692,8 @@ git commit -m "feat(openshell): example production profile + WSL2 setup docs"
 
 - **Spec coverage:** Tasks 1–7 build the core (parser, backend, pool, bridge, wrappers, middleware) — all unit-testable with fakes, no real OpenShell. Task 8 wires it into the profile system. Tasks 9–10 do the workspaceId plumbing. Tasks 11–12 make it real (image + gated integration). Task 13 ships an example profile + docs. Every spec section maps to a task.
 - **Behavior preservation:** Default + eval profiles keep `interpreter` (Task 8 explicitly tests this). `buildAgent` signature unchanged; `workspaceDir()` widening is backward-compatible (no arg = today's behavior, Task 9 tests it). Full existing suite must stay green at every task (Global Constraint).
-- **Placeholder scan:** Task 10's route test references the "existing API test harness" by name rather than inlining the full Elysia harness — this is intentional (follow the existing `apps/api` test style) but the implementer must write real spy assertions, not the placeholder `expect(true).toBe(true)`. Flagged in the task body.
+- **Placeholder scan:** Task 10's route test now uses Bun's `mock.module` to stub `buildAgent` and asserts `recordedConfigurable` equals `{ workspace_id }` for both the present and omitted-`workspaceId` cases — no `expect(true).toBe(true)` remains. Task 12's no-op "wrong token" test was removed (the unit `bridge.test.ts` "honors a pre-supplied token" test covers 401). No other placeholders.
+- **Lazy-bridge design (pre-flight amendment):** The bridge binds lazily on the first `shell` call; the bearer token is generated eagerly at middleware build and shared between the sandbox env (baked at create-time) and the lazy bind, so `resolveProfile`/unit tests start no HTTP server. v1 single-profile limitation (process-singleton bridge+pool, first config wins) is documented in Task 13.
 - **Type consistency:** `OpenShellSpec` fields match across types.ts, schema.json, `validateMerged`, and the example profile. `MwCtx` additions (`openshell?`, `allTools`) match between middleware.ts and resolve.ts. `ExecResult` defined once in backend.ts, re-exported from cli.ts.
 - **Future-proofing:** The `ExecutionBackend` interface (Task 2) + the `backend?` injection seam in `buildOpenShellMiddleware` (Task 7) + the commented FUTURE methods (snapshot/restore, process mgmt) satisfy the spec's "design for snapshot/restore, process management, SDK replacement without changing the agent architecture." Adding them later = interface methods + a backend impl + optional new tools; the `shell` middleware is untouched.
 
