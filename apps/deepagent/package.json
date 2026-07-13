@@ -8,7 +8,8 @@
   "scripts": {
     "dev": "bun run --watch src/index.ts",
     "build": "bun build src/index.ts --outdir dist --target bun",
-    "start": "bun run src/index.ts"
+    "start": "bun run src/index.ts",
+    "eval": "bun run src/eval/cli.ts"
   },
   "dependencies": {
     "@langchain/anthropic": "^1.5.1",
