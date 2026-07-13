@@ -29,8 +29,9 @@ function defaultWorkspacePath(): string {
 }
 
 /** Resolve the agent workspace dir: AGENT_WORKSPACE_DIR env, else the default. */
-export function workspaceDir(): string {
-  return process.env.AGENT_WORKSPACE_DIR || defaultWorkspacePath()
+export function workspaceDir(workspaceId?: string): string {
+  const root = process.env.AGENT_WORKSPACE_DIR || defaultWorkspacePath()
+  return workspaceId ? join(root, workspaceId) : root
 }
 
 /** Allow-all within the workspace. virtualMode already confines paths to rootDir;
