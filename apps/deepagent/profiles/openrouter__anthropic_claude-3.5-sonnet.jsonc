@@ -1,0 +1,16 @@
+// apps/deepagent/profiles/openrouter__anthropic_claude-3.5-sonnet.jsonc (example; adjust provider/model)
+{
+  // Select the OpenShell persistent-shell middleware instead of quickjs interpreter.
+  "middleware": ["openshell", "coerceToolContent", "readFileContinuation"],
+  "openshell": {
+    "image": "harnesh/agent-sandbox:ubuntu-lts",
+    "idleTimeoutMs": 1800000,
+    "bridgePort": 7777,
+    "executionTimeoutMs": 120000
+  },
+  "ptcAllowlist": [
+    "search_instruments", "get_ltp", "get_ohlc_quote", "historical_candles",
+    "intraday_candles", "option_chain", "market_status", "read_candles",
+    "company_profile", "news"
+  ]
+}
