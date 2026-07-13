@@ -3,7 +3,10 @@ import { ToolMessage } from '@langchain/core/messages'
 import { mkdtempSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { buildModel, resolveAgentConfig, workspaceDir, WORKSPACE_PERMISSIONS, buildBackend, buildAgent, PTC_ALLOWLIST, buildInterpreterMiddleware, READ_ONLY_TOOLS, SUBAGENTS, buildReadFileContinuationMiddleware } from './agent'
+import { buildModel, resolveAgentConfig, workspaceDir, WORKSPACE_PERMISSIONS, buildBackend, buildAgent } from './agent'
+import { resolveProfile, loadProfile } from './profiles'
+import { DEFAULT_PROFILE_DATA } from './profiles/defaults'
+import { buildReadFileContinuationMiddleware } from './profiles/implementations'
 
 beforeEach(() => {
   process.env.AGENT_SETTINGS_PATH = `/tmp/agent-settings-${Math.random().toString(36).slice(2)}.json`
@@ -93,28 +96,6 @@ test('buildBackend: rejects path traversal outside rootDir', async () => {
   expect(r.content).toBeUndefined()
 })
 
-test('PTC_ALLOWLIST: 10 read-only data tools, excludes sync_candles + call_api', () => {
-  expect(PTC_ALLOWLIST).toEqual([
-    'search_instruments',
-    'get_ltp',
-    'get_ohlc_quote',
-    'historical_candles',
-    'intraday_candles',
-    'option_chain',
-    'market_status',
-    'read_candles',
-    'company_profile',
-    'news',
-  ])
-  expect(PTC_ALLOWLIST).not.toContain('sync_candles')
-  expect(PTC_ALLOWLIST).not.toContain('call_api')
-})
-
-test('buildInterpreterMiddleware: returns a truthy middleware object without throwing', () => {
-  const mw = buildInterpreterMiddleware()
-  expect(mw).toBeTruthy()
-})
-
 test('buildAgent: constructs with interpreter middleware without throwing', async () => {
   const root = mkdtempSync(join(tmpdir(), 'da-')) + '/mw'
   process.env.AGENT_WORKSPACE_DIR = root
@@ -123,48 +104,67 @@ test('buildAgent: constructs with interpreter middleware without throwing', asyn
   expect(existsSync(root)).toBe(true)
 })
 
-test('READ_ONLY_TOOLS: 10 read-only data tools from allTools, excludes sync_candles + call_api', () => {
-  const names = READ_ONLY_TOOLS.map((t: any) => t.name)
-  expect(names.sort()).toEqual([...PTC_ALLOWLIST].sort())
-  expect(names).not.toContain('sync_candles')
-  expect(names).not.toContain('call_api')
-})
-
-test('buildInterpreterMiddleware: { subagents: false } returns truthy without throwing', () => {
-  const mw = buildInterpreterMiddleware({ subagents: false })
-  expect(mw).toBeTruthy()
-})
-
-test('SUBAGENTS: exactly 3 named subagents, no duplicates, general-purpose present', () => {
-  const names = SUBAGENTS.map((s: any) => s.name)
-  expect(names).toHaveLength(3)
-  expect(new Set(names).size).toBe(3)
-  expect(names).toContain('general-purpose')
-  expect(names).toContain('quant')
-  expect(names).toContain('reporter')
-})
-
-test('SUBAGENTS: general-purpose + quant use READ_ONLY_TOOLS; reporter tools empty', () => {
-  const byName = Object.fromEntries(SUBAGENTS.map((s: any) => [s.name, s]))
-  expect(byName['general-purpose'].tools).toBe(READ_ONLY_TOOLS)
-  expect(byName['quant'].tools).toBe(READ_ONLY_TOOLS)
-  expect(byName['reporter'].tools).toEqual([])
-})
-
-test('SUBAGENTS: quant has middleware; general-purpose + reporter have none', () => {
-  const byName = Object.fromEntries(SUBAGENTS.map((s: any) => [s.name, s]))
-  expect(Array.isArray(byName['quant'].middleware)).toBe(true)
-  expect(byName['quant'].middleware.length).toBeGreaterThan(0)
-  expect(byName['general-purpose'].middleware).toBeUndefined()
-  expect(byName['reporter'].middleware).toBeUndefined()
-})
-
 test('buildAgent: constructs with subagents without throwing', async () => {
   const root = mkdtempSync(join(tmpdir(), 'da-')) + '/sub'
   process.env.AGENT_WORKSPACE_DIR = root
   const agent = await buildAgent({ provider: 'ollama', apiKey: '', baseUrl: 'http://localhost:11434', model: 'llama3' })
   expect(agent).toBeTruthy()
   expect(existsSync(root)).toBe(true)
+})
+
+test('default profile: ptcAllowlist = 10 read-only data tools, excludes sync_candles + call_api', () => {
+  const p = DEFAULT_PROFILE_DATA
+  expect(p.ptcAllowlist).toEqual([
+    'search_instruments', 'get_ltp', 'get_ohlc_quote', 'historical_candles', 'intraday_candles',
+    'option_chain', 'market_status', 'read_candles', 'company_profile', 'news',
+  ])
+  expect(p.ptcAllowlist).not.toContain('sync_candles')
+  expect(p.ptcAllowlist).not.toContain('call_api')
+})
+
+test('default profile: READ_ONLY_TOOLS (resolved) = ptcAllowlist tools, excludes sync_candles + call_api', () => {
+  const r = resolveProfile(DEFAULT_PROFILE_DATA)
+  const gp = r.subagents.find((s) => s.name === 'general-purpose')!
+  const names = (gp.tools as any[]).map((t) => t.name).sort()
+  expect(names).toEqual([...DEFAULT_PROFILE_DATA.ptcAllowlist].sort())
+  expect(names).not.toContain('sync_candles')
+  expect(names).not.toContain('call_api')
+})
+
+test('default profile: exactly 3 named subagents, no duplicates', () => {
+  const r = resolveProfile(DEFAULT_PROFILE_DATA)
+  const names = r.subagents.map((s) => s.name)
+  expect(names).toHaveLength(3)
+  expect(new Set(names).size).toBe(3)
+  expect(names.sort()).toEqual(['general-purpose', 'quant', 'reporter'])
+})
+
+test('default profile: general-purpose + quant use readOnly tools; reporter tools empty', () => {
+  const r = resolveProfile(DEFAULT_PROFILE_DATA)
+  const byName = Object.fromEntries(r.subagents.map((s) => [s.name, s]))
+  expect((byName['general-purpose'].tools as any[]).map((t) => t.name).sort()).toEqual([...DEFAULT_PROFILE_DATA.ptcAllowlist].sort())
+  expect((byName['quant'].tools as any[]).map((t) => t.name).sort()).toEqual([...DEFAULT_PROFILE_DATA.ptcAllowlist].sort())
+  expect(byName['reporter'].tools).toEqual([])
+})
+
+test('default profile: quant has middleware; general-purpose + reporter have none', () => {
+  const r = resolveProfile(DEFAULT_PROFILE_DATA)
+  const byName = Object.fromEntries(r.subagents.map((s) => [s.name, s]))
+  expect(byName['quant'].middleware.length).toBeGreaterThan(0)
+  expect(byName['general-purpose'].middleware).toEqual([])
+  expect(byName['reporter'].middleware).toEqual([])
+})
+
+test('default profile: parent middleware = 3 built in order', () => {
+  const r = resolveProfile(DEFAULT_PROFILE_DATA)
+  expect(r.parentMiddleware).toHaveLength(3)
+  expect(r.parentMiddleware.every((m) => m)).toBe(true)
+})
+
+test('loadProfile: default profile loads + resolves without throwing', () => {
+  const p = loadProfile('ollama', 'llama3')  // no model file -> default.jsonc chain
+  const r = resolveProfile(p)
+  expect(r.subagents.map((s) => s.name).sort()).toEqual(['general-purpose', 'quant', 'reporter'])
 })
 
 // ReadFileContinuationNoticeMiddleware (ported from NVIDIA's Nemotron Ultra harness
