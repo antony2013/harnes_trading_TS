@@ -4,7 +4,7 @@ import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import Ajv2020 from 'ajv/dist/2020.js'
 import { parseJsonc } from './parse-jsonc'
-import type { ProfileData, SubagentSpec } from './types'
+import type { ProfileData, SubagentSpec, OpenShellOverride } from './types'
 import { DEFAULT_PROFILE_DATA } from './defaults'
 import { MIDDLEWARE_REGISTRY } from './middleware'
 import { allTools } from '../tools'
@@ -124,4 +124,30 @@ export function loadProfile(provider: string, model: string): ProfileData {
     if (layer) result = mergeProfiles(result, layer)
   }
   return validateMerged(result)
+}
+
+/** Apply an API-supplied OpenShell override on top of a validated profile, then
+ *  re-validate. enabled=true sets the 4-field spec + ensures "openshell" in
+ *  middleware; enabled=false removes "openshell" from middleware. `enabled` is
+ *  never written into OpenShellSpec (additionalProperties:false). */
+export function applyOpenShellOverride(profile: ProfileData, override: OpenShellOverride): ProfileData {
+  if (override.enabled) {
+    const middleware = profile.middleware.includes('openshell')
+      ? profile.middleware
+      : [...profile.middleware, 'openshell']
+    return validateMerged(
+      mergeProfiles(profile, {
+        middleware,
+        openshell: {
+          image: override.image,
+          idleTimeoutMs: override.idleTimeoutMs,
+          bridgePort: override.bridgePort,
+          executionTimeoutMs: override.executionTimeoutMs,
+        },
+      }),
+    )
+  }
+  const middleware = profile.middleware.filter((m) => m !== 'openshell')
+  if (middleware.length === profile.middleware.length) return profile
+  return validateMerged(mergeProfiles(profile, { middleware }))
 }

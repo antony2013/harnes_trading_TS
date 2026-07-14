@@ -1,6 +1,6 @@
 // apps/deepagent/src/profiles/openshell-profile.test.ts
 import { test, expect } from 'bun:test'
-import { resolveProfile, mergeProfiles, ProfileSchemaError } from './loader'
+import { resolveProfile, mergeProfiles, applyOpenShellOverride, ProfileSchemaError } from './loader'
 import { DEFAULT_PROFILE_DATA } from './defaults'
 import { loadProfile } from './loader'
 
@@ -49,4 +49,50 @@ test('loadProfile: default chain still resolves + resolves (no openshell regress
   const p = loadProfile('ollama', 'llama3')
   expect(() => resolveProfile(p)).not.toThrow()
   expect(p.middleware).toContain('interpreter')
+})
+
+const overrideOn = {
+  enabled: true,
+  image: 'harnesh/agent-sandbox:ubuntu-lts',
+  idleTimeoutMs: 1_800_000,
+  bridgePort: 7777,
+  executionTimeoutMs: 120_000,
+}
+const overrideOff = { ...overrideOn, enabled: false }
+
+test('applyOpenShellOverride: enabled adds "openshell" to middleware + sets the spec', () => {
+  const base = loadProfile('ollama', 'llama3') // default chain: no openshell
+  expect(base.middleware).not.toContain('openshell')
+  const merged = applyOpenShellOverride(base, overrideOn)
+  expect(merged.middleware).toContain('openshell')
+  expect(merged.openshell).toEqual({
+    image: 'harnesh/agent-sandbox:ubuntu-lts',
+    idleTimeoutMs: 1_800_000,
+    bridgePort: 7777,
+    executionTimeoutMs: 120_000,
+  })
+  // merged profile must still resolve (builds the openshell middleware without throwing)
+  expect(() => resolveProfile(merged)).not.toThrow()
+})
+
+test('applyOpenShellOverride: disabled removes "openshell" from middleware', () => {
+  // start from a profile that already has openshell (enabled override on the default)
+  const withOs = applyOpenShellOverride(loadProfile('ollama', 'llama3'), overrideOn)
+  expect(withOs.middleware).toContain('openshell')
+  const merged = applyOpenShellOverride(withOs, overrideOff)
+  expect(merged.middleware).not.toContain('openshell')
+  expect(() => resolveProfile(merged)).not.toThrow()
+})
+
+test('applyOpenShellOverride: enabled=true with a complete spec re-validates and resolves', () => {
+  const merged = applyOpenShellOverride(loadProfile('ollama', 'llama3'), overrideOn)
+  const r = resolveProfile(merged)
+  // default 3 + openshell = 4 parent middleware
+  expect(r.parentMiddleware).toHaveLength(4)
+})
+
+test('applyOpenShellOverride: disabled on a profile without openshell is a no-op (same middleware)', () => {
+  const base = loadProfile('ollama', 'llama3')
+  const merged = applyOpenShellOverride(base, overrideOff)
+  expect(merged.middleware).toEqual(base.middleware)
 })

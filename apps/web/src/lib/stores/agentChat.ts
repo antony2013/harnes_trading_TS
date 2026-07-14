@@ -20,6 +20,7 @@ export const chatError = writable<string | null>(null);
 
 let controller: AbortController | null = null;
 let currentAssistantId: string | null = null;
+let currentWorkspaceId: string | null = null;
 
 function patchAssistant(patch: (a: ChatMessage) => ChatMessage): void {
 	const id = currentAssistantId;
@@ -49,6 +50,7 @@ function handleBlock(block: string): void {
 	if (event === 'token' && typeof payload.text === 'string') appendText(payload.text);
 	else if (event === 'tool_call') pushTool({ type: 'tool_call', name: payload.name, data: payload.input });
 	else if (event === 'tool_result') pushTool({ type: 'tool_result', name: payload.name, data: payload.output });
+	else if (event === 'workspace' && typeof payload.id === 'string') currentWorkspaceId = payload.id;
 	else if (event === 'error') {
 		appendText(`\n\n⚠️ ${payload.message ?? 'error'}`);
 		chatError.set(payload.message ?? 'error');
@@ -79,10 +81,12 @@ export async function sendMessage(text: string): Promise<void> {
 	streaming.set(true);
 	controller = new AbortController();
 	try {
+		const reqBody: { messages: typeof bodyMessages; workspaceId?: string } = { messages: bodyMessages };
+		if (currentWorkspaceId) reqBody.workspaceId = currentWorkspaceId;
 		const res = await fetch('/agent/chat', {
 			method: 'POST',
 			headers: { 'content-type': 'application/json' },
-			body: JSON.stringify({ messages: bodyMessages }),
+			body: JSON.stringify(reqBody),
 			signal: controller.signal
 		});
 		if (!res.ok || !res.body) {
@@ -140,4 +144,5 @@ export function clear(): void {
 	if (get(streaming)) return;
 	messages.set([]);
 	chatError.set(null);
+	currentWorkspaceId = null;
 }

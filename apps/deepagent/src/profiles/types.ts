@@ -16,6 +16,17 @@ export interface OpenShellSpec {
   executionTimeoutMs: number
 }
 
+/** API-supplied override applied on top of the auto-selected profile.
+ *  `enabled` toggles "openshell" membership in the middleware array; the four
+ *  spec fields populate OpenShellSpec (which has no `enabled` field). */
+export interface OpenShellOverride {
+  enabled: boolean
+  image: string
+  idleTimeoutMs: number
+  bridgePort: number
+  executionTimeoutMs: number
+}
+
 export interface SubagentSpec {
   name: string
   description: string

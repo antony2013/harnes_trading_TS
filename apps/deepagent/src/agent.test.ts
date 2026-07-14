@@ -212,3 +212,24 @@ test('workspaceDir: no id preserves today behavior (root only)', () => {
   process.env.AGENT_WORKSPACE_DIR = '/tmp/ws-root'
   expect(workspaceDir().replace(/\\/g, '/')).toBe('/tmp/ws-root')
 })
+
+test('buildAgent: openshellOverride enabled builds an agent with openshell middleware (no throw)', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'da-')) + '/os-on'
+  process.env.AGENT_WORKSPACE_DIR = root
+  const agent = await buildAgent(
+    { provider: 'ollama', apiKey: '', baseUrl: 'http://localhost:11434', model: 'llama3' },
+    { enabled: true, image: 'harnesh/agent-sandbox:ubuntu-lts', idleTimeoutMs: 1_800_000, bridgePort: 7777, executionTimeoutMs: 120_000 },
+  )
+  expect(agent).toBeTruthy()
+  expect(existsSync(root)).toBe(true)
+})
+
+test('buildAgent: openshellOverride disabled (or absent) leaves the default interpreter profile', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'da-')) + '/os-off'
+  process.env.AGENT_WORKSPACE_DIR = root
+  const agent = await buildAgent(
+    { provider: 'ollama', apiKey: '', baseUrl: 'http://localhost:11434', model: 'llama3' },
+    { enabled: false, image: 'harnesh/agent-sandbox:ubuntu-lts', idleTimeoutMs: 1_800_000, bridgePort: 7777, executionTimeoutMs: 120_000 },
+  )
+  expect(agent).toBeTruthy()
+})
