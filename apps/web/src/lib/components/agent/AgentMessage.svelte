@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { ChatMessage } from '$lib/stores/agentChat';
 	import ToolStep from './ToolStep.svelte';
+	import ShellStep from './ShellStep.svelte';
 	import { marked } from 'marked';
 
 	let { msg }: { msg: ChatMessage } = $props();
@@ -20,7 +21,7 @@
 	</div>
 	<div class="body">
 		{#if msg.tools && msg.tools.length}
-			<div class="tools">{#each msg.tools as t, i (i)}<ToolStep step={t} />{/each}</div>
+			<div class="tools">{#each msg.tools as t, i (i)}{#if t.name === 'shell'}<ShellStep step={t} />{:else}<ToolStep step={t} />{/if}{/each}</div>
 		{/if}
 		{#if msg.content}
 			<div class="text">{@html htmlContent}</div>
