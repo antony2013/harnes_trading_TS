@@ -7,6 +7,13 @@ import {
   type AgentSettings,
   type Provider,
 } from './settings'
+import {
+  readOpenShellSettings,
+  writeOpenShellSettings,
+  DEFAULT_OPENSHELL_SETTINGS,
+  type OpenShellSettings,
+} from './openshell'
+import { spawn } from 'node:child_process'
 import { buildAgent, buildModel, workspaceDir, type AgentConfig } from '@harnesh-trading-ts/deepagent'
 import { mkdirSync } from 'node:fs'
 
@@ -82,6 +89,36 @@ async function testProvider(cfg: AgentConfig): Promise<{ ok: boolean; detail: st
   }
 }
 
+/** Run a command and resolve {ok, stdout, stderr}; never throws. */
+function runCmd(cmd: string, args: string[], timeoutMs = 8000): Promise<{ ok: boolean; stdout: string; stderr: string }> {
+  return new Promise((resolve) => {
+    let stdout = ''
+    let stderr = ''
+    let child: any
+    try {
+      child = spawn(cmd, args, { shell: true, timeout: timeoutMs })
+    } catch (err: any) {
+      resolve({ ok: false, stdout, stderr: String(err?.message ?? err) })
+      return
+    }
+    child.stdout?.on('data', (d: Buffer) => { stdout += d.toString() })
+    child.stderr?.on('data', (d: Buffer) => { stderr += d.toString() })
+    child.on('error', () => resolve({ ok: false, stdout, stderr: stderr || `${cmd} not found` }))
+    child.on('close', (code: number | null) => resolve({ ok: code === 0, stdout, stderr }))
+  })
+}
+
+/** Verify Docker is reachable and the configured image is present locally. */
+async function testOpenShell(image: string): Promise<{ ok: boolean; detail: string }> {
+  const daemon = await runCmd('docker', ['info'])
+  if (!daemon.ok) return { ok: false, detail: 'Docker daemon not reachable (is Docker Desktop running?)' }
+  const img = await runCmd('docker', ['images', '-q', image])
+  if (!img.ok || !img.stdout.trim()) {
+    return { ok: false, detail: `Image "${image}" not found locally. Pull it first: docker pull ${image}` }
+  }
+  return { ok: true, detail: `Docker reachable; image "${image}" present.` }
+}
+
 export const agent = new Elysia({ name: 'agent' })
   .get(
     '/agent/settings',
@@ -145,6 +182,47 @@ export const agent = new Elysia({ name: 'agent' })
       }),
       detail: { summary: 'Test LLM provider connection (does NOT save)', tags: ['Agent'] },
     },
+  )
+  .get(
+    '/agent/openshell',
+    () => {
+      const s = readOpenShellSettings()
+      return s ?? DEFAULT_OPENSHELL_SETTINGS
+    },
+    { detail: { summary: 'Get OpenShell sandbox settings', tags: ['Agent'] } },
+  )
+  .put(
+    '/agent/openshell',
+    ({ body }) => {
+      const next: OpenShellSettings = {
+        enabled: body.enabled,
+        image: body.image,
+        idleTimeoutMs: body.idleTimeoutMs,
+        bridgePort: body.bridgePort,
+        executionTimeoutMs: body.executionTimeoutMs,
+      }
+      writeOpenShellSettings(next)
+      return { ok: true }
+    },
+    {
+      body: t.Object({
+        enabled: t.Boolean(),
+        image: t.String({ minLength: 1 }),
+        idleTimeoutMs: t.Integer({ minimum: 1 }),
+        bridgePort: t.Integer({ minimum: 0 }),
+        executionTimeoutMs: t.Integer({ minimum: 1 }),
+      }),
+      detail: { summary: 'Save OpenShell sandbox settings', tags: ['Agent'] },
+    },
+  )
+  .post(
+    '/agent/openshell/test',
+    async () => {
+      const s = readOpenShellSettings()
+      if (!s) return { ok: false, detail: 'No OpenShell settings saved yet.' }
+      return testOpenShell(s.image)
+    },
+    { detail: { summary: 'Test Docker + image availability for OpenShell', tags: ['Agent'] } },
   )
   .post(
     '/agent/chat',

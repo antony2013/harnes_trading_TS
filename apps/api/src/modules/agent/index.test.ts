@@ -26,6 +26,7 @@ const { agent } = await import('./index')
 
 beforeEach(() => {
   process.env.AGENT_SETTINGS_PATH = `/tmp/agent-settings-${Math.random().toString(36).slice(2)}.json`
+  process.env.AGENT_OPENSHELL_SETTINGS_PATH = `/tmp/openshell-settings-${Math.random().toString(36).slice(2)}.json`
   recordedConfigurable = undefined
   // Configure the agent so readSettings() returns a valid model and the route proceeds to buildAgent.
   writeSettings({ provider: 'ollama', baseUrl: 'http://localhost:11434', model: 'llama3', apiKey: '' })
@@ -77,4 +78,81 @@ test('POST /agent/chat rejects a path-traversing workspaceId with 422 (schema gu
   expect(res.status).toBe(422)
   await res.text()
   expect(recordedConfigurable).toBeUndefined()
+})
+
+import { writeOpenShellSettings } from './openshell'
+
+test('GET /agent/openshell: returns defaults when no file', async () => {
+  const res = await agent.handle(new Request('http://localhost/agent/openshell'))
+  expect(res.status).toBe(200)
+  const body = await res.json()
+  expect(body).toEqual({
+    enabled: false,
+    image: 'harnesh/agent-sandbox:ubuntu-lts',
+    idleTimeoutMs: 1_800_000,
+    bridgePort: 7777,
+    executionTimeoutMs: 120_000,
+  })
+})
+
+test('PUT /agent/openshell: writes + GET returns saved values', async () => {
+  const putRes = await agent.handle(
+    new Request('http://localhost/agent/openshell', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        enabled: true,
+        image: 'harnesh/agent-sandbox:ubuntu-lts',
+        idleTimeoutMs: 900_000,
+        bridgePort: 8000,
+        executionTimeoutMs: 60_000,
+      }),
+    }),
+  )
+  expect(putRes.status).toBe(200)
+  const getRes = await agent.handle(new Request('http://localhost/agent/openshell'))
+  expect(await getRes.json()).toEqual({
+    enabled: true,
+    image: 'harnesh/agent-sandbox:ubuntu-lts',
+    idleTimeoutMs: 900_000,
+    bridgePort: 8000,
+    executionTimeoutMs: 60_000,
+  })
+})
+
+test('PUT /agent/openshell: 422 on bad payload (non-bool enabled)', async () => {
+  const res = await agent.handle(
+    new Request('http://localhost/agent/openshell', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ enabled: 'yes', image: 'x', idleTimeoutMs: 1, bridgePort: 1, executionTimeoutMs: 1 }),
+    }),
+  )
+  expect(res.status).toBe(422)
+})
+
+test('PUT /agent/openshell: 422 on sub-minimum bridgePort', async () => {
+  const res = await agent.handle(
+    new Request('http://localhost/agent/openshell', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ enabled: true, image: 'x', idleTimeoutMs: 1, bridgePort: -1, executionTimeoutMs: 1 }),
+    }),
+  )
+  expect(res.status).toBe(422)
+})
+
+test('POST /agent/openshell/test: returns 200 with {ok, detail} shape', async () => {
+  writeOpenShellSettings({
+    enabled: true,
+    image: 'harnesh/agent-sandbox:ubuntu-lts',
+    idleTimeoutMs: 1_800_000,
+    bridgePort: 7777,
+    executionTimeoutMs: 120_000,
+  })
+  const res = await agent.handle(new Request('http://localhost/agent/openshell/test', { method: 'POST' }))
+  expect(res.status).toBe(200)
+  const body = await res.json()
+  expect(typeof body.ok).toBe('boolean')
+  expect(typeof body.detail).toBe('string')
 })
