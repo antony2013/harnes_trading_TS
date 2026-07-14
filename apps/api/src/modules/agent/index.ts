@@ -97,7 +97,7 @@ function runCmd(cmd: string, args: string[], timeoutMs = 8000): Promise<{ ok: bo
     let stderr = ''
     let child: any
     try {
-      child = spawn(cmd, args, { shell: true, timeout: timeoutMs })
+      child = spawn(cmd, args, { timeout: timeoutMs })
     } catch (err: any) {
       resolve({ ok: false, stdout, stderr: String(err?.message ?? err) })
       return

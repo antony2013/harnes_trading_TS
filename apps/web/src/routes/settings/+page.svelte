@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { loadSettings, fetchOllamaModels, agentSettings } from '$lib/stores/agentSettings';
-	import { loadOpenShell, openshellSettings } from '$lib/stores/agentOpenshell';
+	import { loadOpenShell } from '$lib/stores/agentOpenshell';
 	import ProviderForm from '$lib/components/agent/ProviderForm.svelte';
 	import OpenShellForm from '$lib/components/agent/OpenShellForm.svelte';
 

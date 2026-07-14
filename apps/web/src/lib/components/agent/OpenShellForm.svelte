@@ -5,7 +5,6 @@
 		openshellTesting,
 		openshellTestResult,
 		openshellError,
-		loadOpenShell,
 		saveOpenShell,
 		testOpenShell,
 		DEFAULT_OPENSHELL,
