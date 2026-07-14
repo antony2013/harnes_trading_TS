@@ -16,6 +16,7 @@ import {
 import { spawn } from 'node:child_process'
 import { buildAgent, buildModel, workspaceDir, type AgentConfig } from '@harnesh-trading-ts/deepagent'
 import { mkdirSync } from 'node:fs'
+import { randomUUID } from 'node:crypto'
 
 const PROVIDER_LITERAL = t.Union([
   t.Literal('anthropic'),
@@ -236,12 +237,27 @@ export const agent = new Elysia({ name: 'agent' })
         return
       }
 
-      const workspaceId = (body.workspaceId as string) || '__default__'
+      // Backend owns the workspaceId lifecycle: generate one when the client omits it
+      // (first turn), reuse the client-supplied one on subsequent turns.
+      const workspaceId = (body.workspaceId as string) || randomUUID()
       mkdirSync(workspaceDir(workspaceId), { recursive: true })
+      yield sse({ event: 'workspace', data: { id: workspaceId } })
+
+      // Read the OpenShell overlay and pass it to the deepagent profile-merge.
+      const osSettings = readOpenShellSettings()
+      const openshellOverride = osSettings
+        ? {
+            enabled: osSettings.enabled,
+            image: osSettings.image,
+            idleTimeoutMs: osSettings.idleTimeoutMs,
+            bridgePort: osSettings.bridgePort,
+            executionTimeoutMs: osSettings.executionTimeoutMs,
+          }
+        : undefined
 
       let agent
       try {
-        agent = await buildAgent(s)
+        agent = await buildAgent(s, openshellOverride)
       } catch (err: any) {
         yield sse({ event: 'error', data: { message: err?.message ?? 'Failed to build agent' } })
         return
@@ -280,8 +296,8 @@ export const agent = new Elysia({ name: 'agent' })
     {
       body: t.Object({
         // Reject path-traversing / absurd-length workspaceId at the schema layer.
-        // `__default__` fallback (letters + underscores, length 10) matches; the
-        // route handler still coerces absent -> '__default__'. Elysia returns 422
+        // A client-supplied id must match this regex; when omitted, the handler
+        // generates a uuid (hex + hyphens, within the charset). Elysia returns 422
         // before the handler for non-matching values (e.g. "../../etc/x").
         workspaceId: t.Optional(t.RegExp(/^[A-Za-z0-9_-]{1,64}$/)),
         messages: t.Array(
@@ -293,7 +309,7 @@ export const agent = new Elysia({ name: 'agent' })
         ),
       }),
       detail: {
-        summary: 'Agent chat (SSE stream: token/tool_call/tool_result/done/error)',
+        summary: 'Agent chat (SSE stream: workspace/token/tool_call/tool_result/done/error)',
         tags: ['Agent'],
         hide: true, // stream — not executable via Swagger "Try it out"
       },
