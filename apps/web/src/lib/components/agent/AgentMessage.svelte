@@ -69,6 +69,19 @@
 	.msg[data-role='assistant'] .who {
 		color: var(--saffron);
 	}
+	/* User input: right-aligned highlighted bubble. Agent output stays left. */
+	.msg[data-role='user'] .body {
+		display: flex;
+		justify-content: flex-end;
+	}
+	.msg[data-role='user'] .text {
+		background: var(--ink-800);
+		border: 1px solid var(--saffron-line);
+		border-radius: var(--radius-sm);
+		padding: 0.5rem 0.85rem;
+		max-width: min(75%, 52ch);
+		margin-left: auto;
+	}
 	.body {
 		flex: 1 1 auto;
 		min-width: 0;
