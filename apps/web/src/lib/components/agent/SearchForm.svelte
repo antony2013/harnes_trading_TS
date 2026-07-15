@@ -49,7 +49,7 @@
 	<p class="hint">
 		When enabled, the agent gets a <code>search</code> subagent it can delegate to. It searches the web via
 		<code>SearXNG</code> and reads pages via <code>Crawl4AI</code>. Requires both services running. See
-		<a href="/docs/search-setup.md" target="_blank" rel="noreferrer">search setup</a>.
+		<a href="https://github.com/antony2013/harnes_trading_TS/blob/main/docs/search-setup.md" target="_blank" rel="noreferrer">search setup</a>.
 	</p>
 
 	<label class="row">
