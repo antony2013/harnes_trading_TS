@@ -1,5 +1,5 @@
 // apps/deepagent/src/profiles/defaults.ts
-import type { ProfileData } from './types'
+import type { ProfileData, SubagentSpec } from './types'
 
 /** Compiled-in floor (layer 1 of the 4-level resolution chain). Seeded verbatim
  *  from today's hardcoded agent.ts values; identical to profiles/default.jsonc
@@ -45,4 +45,18 @@ export const DEFAULT_PROFILE_DATA: ProfileData = {
     },
   ],
   flags: { injectTodayDate: true },
+}
+
+/** The search subagent, spliced into a profile by applySearchOverride when
+ *  enabled. NOT part of DEFAULT_PROFILE_DATA — search is opt-in (off by default),
+ *  mirroring OpenShell. tools:'none' because web_search/crawl_page are delivered
+ *  via the 'search' middleware, not the static allTools registry. */
+export const SEARCH_SUBAGENT: SubagentSpec = {
+  name: 'search',
+  description:
+    'Search the public web (SearXNG) and read page content (Crawl4AI) for news, announcements, docs, or any topic the other tools cannot answer.',
+  systemPrompt:
+    'You are a web research subagent. Use web_search to find sources, then crawl_page on the 1-2 most relevant URLs to read their content. Return a concise synthesized answer with source URLs as citations. Prefer recent results. Do not write files.',
+  tools: 'none',
+  middleware: ['search'],
 }

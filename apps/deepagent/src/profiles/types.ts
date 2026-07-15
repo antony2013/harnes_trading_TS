@@ -27,6 +27,25 @@ export interface OpenShellOverride {
   executionTimeoutMs: number
 }
 
+/** Search subagent spec. Present only when `middleware` includes 'search'. */
+export interface SearchSpec {
+  searxngBaseUrl: string
+  crawl4aiBaseUrl: string
+  maxResults: number
+  crawlTimeoutMs: number
+}
+
+/** API-supplied override applied on top of the auto-selected profile.
+ *  `enabled` toggles "search" membership in the middleware array + splices in
+ *  the `search` subagent; the four spec fields populate SearchSpec. */
+export interface SearchOverride {
+  enabled: boolean
+  searxngBaseUrl: string
+  crawl4aiBaseUrl: string
+  maxResults: number
+  crawlTimeoutMs: number
+}
+
 export interface SubagentSpec {
   name: string
   description: string
@@ -48,6 +67,7 @@ export interface ProfileData {
   subagents: SubagentSpec[]
   flags: ProfileFlags
   openshell?: OpenShellSpec  // present only when middleware includes 'openshell'
+  search?: SearchSpec        // present only when middleware includes 'search'
 }
 
 /** Names resolved to real Tool objects + built middleware. Output of resolveProfile. */
