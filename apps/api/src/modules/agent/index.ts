@@ -13,6 +13,13 @@ import {
   DEFAULT_OPENSHELL_SETTINGS,
   type OpenShellSettings,
 } from './openshell'
+import {
+  readSearchSettings,
+  writeSearchSettings,
+  DEFAULT_SEARCH_SETTINGS,
+  testSearch,
+  type SearchSettings,
+} from './search'
 import { spawn } from 'node:child_process'
 import { buildAgent, buildModel, workspaceDir, type AgentConfig } from '@harnesh-trading-ts/deepagent'
 import { mkdirSync } from 'node:fs'
@@ -225,6 +232,47 @@ export const agent = new Elysia({ name: 'agent' })
     },
     { detail: { summary: 'Test Docker + image availability for OpenShell', tags: ['Agent'] } },
   )
+  .get(
+    '/agent/search',
+    () => {
+      const s = readSearchSettings()
+      return s ?? DEFAULT_SEARCH_SETTINGS
+    },
+    { detail: { summary: 'Get web search settings', tags: ['Agent'] } },
+  )
+  .put(
+    '/agent/search',
+    ({ body }) => {
+      const next: SearchSettings = {
+        enabled: body.enabled,
+        searxngBaseUrl: body.searxngBaseUrl,
+        crawl4aiBaseUrl: body.crawl4aiBaseUrl,
+        maxResults: body.maxResults,
+        crawlTimeoutMs: body.crawlTimeoutMs,
+      }
+      writeSearchSettings(next)
+      return { ok: true }
+    },
+    {
+      body: t.Object({
+        enabled: t.Boolean(),
+        searxngBaseUrl: t.String({ minLength: 1 }),
+        crawl4aiBaseUrl: t.String({ minLength: 1 }),
+        maxResults: t.Integer({ minimum: 1 }),
+        crawlTimeoutMs: t.Integer({ minimum: 1 }),
+      }),
+      detail: { summary: 'Save web search settings', tags: ['Agent'] },
+    },
+  )
+  .post(
+    '/agent/search/test',
+    async () => {
+      const s = readSearchSettings()
+      if (!s) return { ok: false, detail: 'No search settings saved yet.' }
+      return testSearch(s)
+    },
+    { detail: { summary: 'Test SearXNG + Crawl4AI reachability', tags: ['Agent'] } },
+  )
   .post(
     '/agent/chat',
     async function* ({ body, set, request }) {
@@ -255,9 +303,21 @@ export const agent = new Elysia({ name: 'agent' })
           }
         : undefined
 
+      // Read the search overlay and pass it to the deepagent profile-merge.
+      const searchSettings = readSearchSettings()
+      const searchOverride = searchSettings?.enabled
+        ? {
+            enabled: true,
+            searxngBaseUrl: searchSettings.searxngBaseUrl,
+            crawl4aiBaseUrl: searchSettings.crawl4aiBaseUrl,
+            maxResults: searchSettings.maxResults,
+            crawlTimeoutMs: searchSettings.crawlTimeoutMs,
+          }
+        : undefined
+
       let agent
       try {
-        agent = await buildAgent(s, openshellOverride)
+        agent = await buildAgent(s, openshellOverride, searchOverride)
       } catch (err: any) {
         yield sse({ event: 'error', data: { message: err?.message ?? 'Failed to build agent' } })
         return
