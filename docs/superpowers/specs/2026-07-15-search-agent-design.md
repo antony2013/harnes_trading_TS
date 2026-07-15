@@ -214,7 +214,7 @@ Add a "Web search" `<section class="card">` mounting `SearchForm`, and `await lo
 SearXNG is already running on `:8080`. Crawl4AI is not set up yet. Add `docs/search-setup.md`:
 
 - Run the Crawl4AI server via Docker:
-  `docker run -d -p 11235:11235 --name crawl4ai unclecode/crawl4ai:latest`
+  `docker run -d -p 11235:11235 --name crawl4ai unclecode/crawl4ai:basic`
   (exposes an HTTP API on `:11235` with `GET /health` and `POST /crawl`).
 - Confirm:
   - `curl http://localhost:11235/health` → healthy.
