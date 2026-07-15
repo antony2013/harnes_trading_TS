@@ -5,6 +5,7 @@ import * as realDeepagent from '@harnesh-trading-ts/deepagent'
 // Record what streamEvents receives so we can assert the route threaded workspace_id through.
 let recordedConfigurable: any
 let recordedOverride: any
+let recordedSearchOverride: any
 
 // Stub the deepagent package BEFORE ./index imports it. Spread the real namespace so the
 // route's `workspaceDir(workspaceId)` call resolves to the REAL function (Task 9 export),
@@ -13,8 +14,9 @@ let recordedOverride: any
 // route calls before buildAgent — see task-10-report.md.)
 mock.module('@harnesh-trading-ts/deepagent', () => ({
   ...realDeepagent,
-  buildAgent: async (_cfg: any, override: any) => {
-    recordedOverride = override
+  buildAgent: async (_cfg: any, osOverride: any, searchOverride: any) => {
+    recordedOverride = osOverride
+    recordedSearchOverride = searchOverride
     return {
       // Fake agent: record configurable, emit no events, let the route yield `done`.
       streamEvents: async function* (_input: any, opts: any) {
@@ -31,8 +33,10 @@ const { agent } = await import('./index')
 beforeEach(() => {
   process.env.AGENT_SETTINGS_PATH = `/tmp/agent-settings-${Math.random().toString(36).slice(2)}.json`
   process.env.AGENT_OPENSHELL_SETTINGS_PATH = `/tmp/openshell-settings-${Math.random().toString(36).slice(2)}.json`
+  process.env.AGENT_SEARCH_SETTINGS_PATH = `/tmp/search-settings-${Math.random().toString(36).slice(2)}.json`
   recordedConfigurable = undefined
   recordedOverride = undefined
+  recordedSearchOverride = undefined
   // Configure the agent so readSettings() returns a valid model and the route proceeds to buildAgent.
   writeSettings({ provider: 'ollama', baseUrl: 'http://localhost:11434', model: 'llama3', apiKey: '' })
 })
@@ -202,4 +206,98 @@ test('POST /agent/chat passes undefined override when no openshell settings save
   )
   await res.text()
   expect(recordedOverride).toBeUndefined()
+})
+
+import { writeSearchSettings, DEFAULT_SEARCH_SETTINGS } from './search'
+
+test('GET /agent/search: returns defaults when no file', async () => {
+  const res = await agent.handle(new Request('http://localhost/agent/search'))
+  expect(res.status).toBe(200)
+  expect(await res.json()).toEqual(DEFAULT_SEARCH_SETTINGS)
+})
+
+test('PUT /agent/search: writes + GET returns saved values', async () => {
+  const putRes = await agent.handle(
+    new Request('http://localhost/agent/search', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        enabled: true,
+        searxngBaseUrl: 'http://localhost:8080',
+        crawl4aiBaseUrl: 'http://localhost:11235',
+        maxResults: 7,
+        crawlTimeoutMs: 45_000,
+      }),
+    }),
+  )
+  expect(putRes.status).toBe(200)
+  const getRes = await agent.handle(new Request('http://localhost/agent/search'))
+  expect(await getRes.json()).toEqual({
+    enabled: true,
+    searxngBaseUrl: 'http://localhost:8080',
+    crawl4aiBaseUrl: 'http://localhost:11235',
+    maxResults: 7,
+    crawlTimeoutMs: 45_000,
+  })
+})
+
+test('PUT /agent/search: 422 on non-bool enabled', async () => {
+  const res = await agent.handle(
+    new Request('http://localhost/agent/search', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ enabled: 'yes', searxngBaseUrl: 'x', crawl4aiBaseUrl: 'y', maxResults: 1, crawlTimeoutMs: 1 }),
+    }),
+  )
+  expect(res.status).toBe(422)
+})
+
+test('POST /agent/chat threads search override into buildAgent when settings enabled', async () => {
+  writeSearchSettings({
+    enabled: true,
+    searxngBaseUrl: 'http://localhost:8080',
+    crawl4aiBaseUrl: 'http://localhost:11235',
+    maxResults: 5,
+    crawlTimeoutMs: 60_000,
+  })
+  const res = await agent.handle(
+    new Request('http://localhost/agent/chat', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ messages: [{ role: 'user', content: 'hi' }] }),
+    }),
+  )
+  await res.text()
+  expect(recordedSearchOverride).toEqual({
+    enabled: true,
+    searxngBaseUrl: 'http://localhost:8080',
+    crawl4aiBaseUrl: 'http://localhost:11235',
+    maxResults: 5,
+    crawlTimeoutMs: 60_000,
+  })
+})
+
+test('POST /agent/chat passes undefined searchOverride when search disabled', async () => {
+  writeSearchSettings({ ...DEFAULT_SEARCH_SETTINGS, enabled: false })
+  const res = await agent.handle(
+    new Request('http://localhost/agent/chat', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ messages: [{ role: 'user', content: 'hi' }] }),
+    }),
+  )
+  await res.text()
+  expect(recordedSearchOverride).toBeUndefined()
+})
+
+test('POST /agent/chat passes undefined searchOverride when no search settings saved', async () => {
+  const res = await agent.handle(
+    new Request('http://localhost/agent/chat', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ messages: [{ role: 'user', content: 'hi' }] }),
+    }),
+  )
+  await res.text()
+  expect(recordedSearchOverride).toBeUndefined()
 })

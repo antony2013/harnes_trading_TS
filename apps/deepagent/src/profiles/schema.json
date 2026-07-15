@@ -28,6 +28,17 @@
       },
       "required": ["image", "idleTimeoutMs", "bridgePort", "executionTimeoutMs"]
     },
+    "search": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "searxngBaseUrl": { "type": "string" },
+        "crawl4aiBaseUrl": { "type": "string" },
+        "maxResults": { "type": "integer", "minimum": 1 },
+        "crawlTimeoutMs": { "type": "integer", "minimum": 1 }
+      },
+      "required": ["searxngBaseUrl", "crawl4aiBaseUrl", "maxResults", "crawlTimeoutMs"]
+    },
     "subagents": {
       "type": "array",
       "items": {

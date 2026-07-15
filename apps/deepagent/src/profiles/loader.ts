@@ -4,8 +4,8 @@ import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import Ajv2020 from 'ajv/dist/2020.js'
 import { parseJsonc } from './parse-jsonc'
-import type { ProfileData, SubagentSpec, OpenShellOverride } from './types'
-import { DEFAULT_PROFILE_DATA } from './defaults'
+import type { ProfileData, SubagentSpec, OpenShellOverride, SearchSpec, SearchOverride } from './types'
+import { DEFAULT_PROFILE_DATA, SEARCH_SUBAGENT } from './defaults'
 import { MIDDLEWARE_REGISTRY } from './middleware'
 import { allTools } from '../tools'
 export { resolveProfile } from './resolve'
@@ -84,6 +84,13 @@ function validateMerged(data: ProfileData): ProfileData {
       throw new Error('profile missing complete openshell spec (image/idleTimeoutMs/bridgePort/executionTimeoutMs)')
     }
   }
+  if (d.middleware.includes('search')) {
+    const s = (d as any).search
+    if (!s || typeof s.searxngBaseUrl !== 'string' || typeof s.crawl4aiBaseUrl !== 'string' ||
+        typeof s.maxResults !== 'number' || typeof s.crawlTimeoutMs !== 'number') {
+      throw new Error('profile missing complete search spec (searxngBaseUrl/crawl4aiBaseUrl/maxResults/crawlTimeoutMs)')
+    }
+  }
   if (!Array.isArray(d.subagents) || d.subagents.length === 0) throw new Error('profile missing subagents')
   for (const s of d.subagents) {
     for (const f of ['description', 'systemPrompt', 'tools', 'middleware'] as const) {
@@ -150,4 +157,40 @@ export function applyOpenShellOverride(profile: ProfileData, override: OpenShell
   const middleware = profile.middleware.filter((m) => m !== 'openshell')
   if (middleware.length === profile.middleware.length) return profile
   return validateMerged(mergeProfiles(profile, { middleware }))
+}
+
+/** Apply an API-supplied search override on top of a validated profile, then
+ *  re-validate. enabled=true adds the 'search' middleware, the SearchSpec, and
+ *  splices in the SEARCH_SUBAGENT; enabled=false strips all three. `enabled` is
+ *  never written into SearchSpec (the spec has no enabled field). */
+export function applySearchOverride(profile: ProfileData, override: SearchOverride): ProfileData {
+  if (override.enabled) {
+    const middleware = profile.middleware.includes('search')
+      ? profile.middleware
+      : [...profile.middleware, 'search']
+    const hasSub = profile.subagents.some((s) => s.name === 'search')
+    const subagents = hasSub ? profile.subagents : [...profile.subagents, { ...SEARCH_SUBAGENT }]
+    return validateMerged({
+      ...profile,
+      middleware,
+      subagents,
+      search: {
+        searxngBaseUrl: override.searxngBaseUrl,
+        crawl4aiBaseUrl: override.crawl4aiBaseUrl,
+        maxResults: override.maxResults,
+        crawlTimeoutMs: override.crawlTimeoutMs,
+      },
+    })
+  }
+  // disabled: strip 'search' middleware, drop the spec, remove the search subagent.
+  const middleware = profile.middleware.filter((m) => m !== 'search')
+  const subagents = profile.subagents.filter((s) => s.name !== 'search')
+  const wasPresent =
+    middleware.length !== profile.middleware.length ||
+    subagents.length !== profile.subagents.length ||
+    (profile as any).search !== undefined
+  if (!wasPresent) return profile
+  const next: ProfileData = { ...profile, middleware, subagents }
+  delete (next as any).search
+  return validateMerged(next)
 }

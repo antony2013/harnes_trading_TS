@@ -58,3 +58,24 @@ test('resolveProfile: ptcAllowlist + interpreter passed through', () => {
   expect(r.interpreter).toEqual(DEFAULT_PROFILE_DATA.interpreter)
   expect(r.profileVersion).toBe(1)
 })
+
+test('resolveProfile: search subagent resolves with the search middleware (2 tools)', () => {
+  const profile = {
+    ...DEFAULT_PROFILE_DATA,
+    middleware: [...DEFAULT_PROFILE_DATA.middleware, 'search'],
+    search: { searxngBaseUrl: 'http://localhost:8080', crawl4aiBaseUrl: 'http://localhost:11235', maxResults: 5, crawlTimeoutMs: 60000 },
+    subagents: [...DEFAULT_PROFILE_DATA.subagents, {
+      name: 'search', description: 'd', systemPrompt: 's', tools: 'none', middleware: ['search'],
+    }],
+  }
+  const r = resolveProfile(profile)
+  // parent middleware gains 'search' -> 4
+  expect(r.parentMiddleware).toHaveLength(4)
+  const searchSub = r.subagents.find((s) => s.name === 'search')!
+  expect(searchSub).toBeTruthy()
+  expect(searchSub.tools).toEqual([]) // tools:'none'
+  expect(searchSub.middleware).toHaveLength(1)
+  // the search middleware object exposes the 2 tools
+  const mw: any = searchSub.middleware[0]
+  expect(mw.tools.map((t: any) => t.name).sort()).toEqual(['crawl_page', 'web_search'])
+})

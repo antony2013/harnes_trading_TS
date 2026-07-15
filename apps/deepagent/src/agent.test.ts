@@ -233,3 +233,26 @@ test('buildAgent: openshellOverride disabled (or absent) leaves the default inte
   )
   expect(agent).toBeTruthy()
 })
+
+test('buildAgent: searchOverride enabled builds an agent with the search subagent (no throw)', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'da-')) + '/search-on'
+  process.env.AGENT_WORKSPACE_DIR = root
+  const agent = await buildAgent(
+    { provider: 'ollama', apiKey: '', baseUrl: 'http://localhost:11434', model: 'llama3' },
+    undefined,
+    { enabled: true, searxngBaseUrl: 'http://localhost:8080', crawl4aiBaseUrl: 'http://localhost:11235', maxResults: 5, crawlTimeoutMs: 60000 },
+  )
+  expect(agent).toBeTruthy()
+  expect(existsSync(root)).toBe(true)
+})
+
+test('buildAgent: openshell + search overrides together build without throwing', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'da-')) + '/os-search'
+  process.env.AGENT_WORKSPACE_DIR = root
+  const agent = await buildAgent(
+    { provider: 'ollama', apiKey: '', baseUrl: 'http://localhost:11434', model: 'llama3' },
+    { enabled: true, image: 'harnesh/agent-sandbox:ubuntu-lts', idleTimeoutMs: 1_800_000, bridgePort: 7777, executionTimeoutMs: 120_000 },
+    { enabled: true, searxngBaseUrl: 'http://localhost:8080', crawl4aiBaseUrl: 'http://localhost:11235', maxResults: 5, crawlTimeoutMs: 60000 },
+  )
+  expect(agent).toBeTruthy()
+})

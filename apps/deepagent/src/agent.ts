@@ -8,12 +8,12 @@ import { readFileSync, existsSync, mkdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { allTools } from './tools'
-import { loadProfile, resolveProfile, applyOpenShellOverride } from './profiles'
-import type { OpenShellOverride } from './profiles/types'
+import { loadProfile, resolveProfile, applyOpenShellOverride, applySearchOverride } from './profiles'
+import type { OpenShellOverride, SearchOverride } from './profiles/types'
 import { assembleSystemPrompt } from './profiles/prompt'
 
-export type { OpenShellOverride } from './profiles/types'
-export { applyOpenShellOverride } from './profiles'
+export type { OpenShellOverride, SearchOverride } from './profiles/types'
+export { applyOpenShellOverride, applySearchOverride } from './profiles'
 
 export type Provider = 'anthropic' | 'openai' | 'openrouter' | 'ollama' | 'custom'
 
@@ -82,13 +82,14 @@ function todayIST(): string {
   return new Date(Date.now() + 5.5 * 60 * 60 * 1000).toISOString().slice(0, 10)
 }
 
-export async function buildAgent(cfg: AgentConfig, openshellOverride?: OpenShellOverride) {
+export async function buildAgent(cfg: AgentConfig, openshellOverride?: OpenShellOverride, searchOverride?: SearchOverride) {
   if (!cfg.model) throw new Error('Agent config missing model')
   const model = buildModel(cfg)
   const root = workspaceDir()
   mkdirSync(root, { recursive: true })
   let data = loadProfile(cfg.provider, cfg.model)
   if (openshellOverride) data = applyOpenShellOverride(data, openshellOverride)
+  if (searchOverride) data = applySearchOverride(data, searchOverride)
   const profile = resolveProfile(data)
   const systemPrompt = assembleSystemPrompt(profile, todayIST())
   return createDeepAgent({

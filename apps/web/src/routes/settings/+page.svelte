@@ -2,8 +2,10 @@
 	import { onMount } from 'svelte';
 	import { loadSettings, fetchOllamaModels, agentSettings } from '$lib/stores/agentSettings';
 	import { loadOpenShell } from '$lib/stores/agentOpenshell';
+	import { loadSearch } from '$lib/stores/agentSearch';
 	import ProviderForm from '$lib/components/agent/ProviderForm.svelte';
 	import OpenShellForm from '$lib/components/agent/OpenShellForm.svelte';
+	import SearchForm from '$lib/components/agent/SearchForm.svelte';
 
 	onMount(async () => {
 		await loadSettings();
@@ -11,6 +13,7 @@
 			fetchOllamaModels($agentSettings.baseUrl || 'http://localhost:11434');
 		}
 		await loadOpenShell();
+		await loadSearch();
 	});
 </script>
 
@@ -24,6 +27,10 @@
 	<h2>OpenShell sandbox</h2>
 	<p class="muted">Optional: give the agent a persistent shell tool in a Docker sandbox (one per chat workspace).</p>
 	<section class="card"><OpenShellForm /></section>
+
+	<h2>Web search</h2>
+	<p class="muted">Optional: give the agent a web-research subagent (SearXNG + Crawl4AI).</p>
+	<section class="card"><SearchForm /></section>
 </div>
 
 <style>
