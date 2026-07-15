@@ -1,17 +1,19 @@
 // apps/deepagent/src/profiles/middleware.ts
-import type { InterpreterSpec, OpenShellSpec } from './types'
+import type { InterpreterSpec, OpenShellSpec, SearchSpec } from './types'
 import {
   buildInterpreterMiddleware,
   buildCoerceToolContentMiddleware,
   buildReadFileContinuationMiddleware,
 } from './implementations'
 import { buildOpenShellMiddleware } from '../openshell/middleware'
+import { buildSearchMiddleware } from '../search/middleware'
 
 export interface MwCtx {
   ptcAllowlist: string[]
   interpreter: InterpreterSpec
   parent: boolean
   openshell?: OpenShellSpec   // present only when middleware includes 'openshell'
+  search?: SearchSpec         // present only when middleware includes 'search'
   allTools: unknown[]         // the real Tool objects (for the bridge)
 }
 
@@ -39,5 +41,13 @@ export const MIDDLEWARE_REGISTRY: Record<string, (ctx: MwCtx) => unknown> = {
       ptcAllowlist: ctx.ptcAllowlist,
       allTools: ctx.allTools as any[],
     })
+  },
+  search: (ctx) => {
+    const s = ctx.search
+    if (!s || typeof s.searxngBaseUrl !== 'string' || typeof s.crawl4aiBaseUrl !== 'string' ||
+        typeof s.maxResults !== 'number' || typeof s.crawlTimeoutMs !== 'number') {
+      throw new Error('search middleware selected but profile has no complete search spec (searxngBaseUrl/crawl4aiBaseUrl/maxResults/crawlTimeoutMs)')
+    }
+    return buildSearchMiddleware(s)
   },
 }

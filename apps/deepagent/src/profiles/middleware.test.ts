@@ -11,8 +11,23 @@ const ctx = {
   allTools: [],
 }
 
-test('registry: exactly interpreter + coerceToolContent + readFileContinuation', () => {
-  expect(Object.keys(MIDDLEWARE_REGISTRY).sort()).toEqual(['coerceToolContent', 'interpreter', 'openshell', 'readFileContinuation'])
+test('registry: exactly interpreter + coerceToolContent + openshell + readFileContinuation + search', () => {
+  expect(Object.keys(MIDDLEWARE_REGISTRY).sort()).toEqual(['coerceToolContent', 'interpreter', 'openshell', 'readFileContinuation', 'search'])
+})
+
+test('registry: search builds a middleware with 2 tools when ctx.search is a complete spec', () => {
+  const mw: any = MIDDLEWARE_REGISTRY.search({
+    ...ctx,
+    search: { searxngBaseUrl: 'http://localhost:8080', crawl4aiBaseUrl: 'http://localhost:11235', maxResults: 5, crawlTimeoutMs: 60000 },
+  })
+  expect(mw).toBeTruthy()
+  expect(mw.tools).toHaveLength(2)
+  expect(mw.tools.map((t: any) => t.name).sort()).toEqual(['crawl_page', 'web_search'])
+})
+
+test('registry: search throws when ctx.search is missing/incomplete', () => {
+  expect(() => MIDDLEWARE_REGISTRY.search({ ...ctx, search: undefined })).toThrow(/search/)
+  expect(() => MIDDLEWARE_REGISTRY.search({ ...ctx, search: { searxngBaseUrl: 'x' } as any })).toThrow(/search/)
 })
 
 test('registry: interpreter builds a truthy middleware (parent)', () => {
