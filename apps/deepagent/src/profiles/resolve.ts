@@ -22,7 +22,8 @@ export function resolveTools(spec: ToolSetSpec, ptcAllowlist: string[]): unknown
  *  subagent (parent:false) — bounds recursion to depth 1. */
 export function resolveProfile(data: ProfileData): ResolvedProfile {
   const openshell = data.middleware.includes('openshell') ? data.openshell : undefined
-  const parentCtx: MwCtx = { ptcAllowlist: data.ptcAllowlist, interpreter: data.interpreter, parent: true, openshell, allTools }
+  const search = data.middleware.includes('search') ? data.search : undefined
+  const parentCtx: MwCtx = { ptcAllowlist: data.ptcAllowlist, interpreter: data.interpreter, parent: true, openshell, search, allTools }
   const parentMiddleware = data.middleware.map((name) => {
     const builder = MIDDLEWARE_REGISTRY[name]
     if (!builder) throw new Error(`unknown middleware: "${name}"`)
@@ -30,7 +31,8 @@ export function resolveProfile(data: ProfileData): ResolvedProfile {
   })
   const subagents: ResolvedSubagent[] = data.subagents.map((s) => {
     const subOpenshell = s.middleware.includes('openshell') ? data.openshell : undefined
-    const subCtx: MwCtx = { ptcAllowlist: data.ptcAllowlist, interpreter: data.interpreter, parent: false, openshell: subOpenshell, allTools }
+    const subSearch = s.middleware.includes('search') ? data.search : undefined
+    const subCtx: MwCtx = { ptcAllowlist: data.ptcAllowlist, interpreter: data.interpreter, parent: false, openshell: subOpenshell, search: subSearch, allTools }
     const middleware = s.middleware.map((name) => {
       const builder = MIDDLEWARE_REGISTRY[name]
       if (!builder) throw new Error(`unknown middleware: "${name}"`)
